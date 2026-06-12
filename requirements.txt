@@ -1,0 +1,12 @@
+mss>=9.0
+vgamepad>=0.1.0
+openai>=1.50
+pillow>=10.0
+pytesseract>=0.3.13
+pydantic>=2.5
+python-dotenv>=1.0
+loguru>=0.7
+
+# dev
+pytest>=8.0
+ruff>=0.5

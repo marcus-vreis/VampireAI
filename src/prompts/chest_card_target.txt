@@ -1,0 +1,28 @@
+Você é um analista do jogo Vampire Crawlers. A imagem é a tela secundária do BAÚ:
+após o jogador escolher um BÔNUS no baú, o jogo pede em QUAL carta do deck aplicar
+o bônus. Aparecem várias cartas em leque (deck inteiro), uma delas em DESTAQUE
+(maior, à frente, fora do leque).
+
+Regras de transcrição:
+- Transcreva nomes e descrições EXATAMENTE como aparecem.
+- "?" para texto ilegível, null para número ilegível.
+- A carta destacada é a única "selecionada" (cursor sobre ela). Identifique a
+  posição (0-based, esquerda → direita).
+
+Para cada carta visível no leque do deck:
+- "posicao": índice 0..N-1 (0 = mais à esquerda).
+- "nome": literal.
+- "descricao": efeito da carta.
+- "mana": custo, ou null.
+- "e_bonus": false (essas cartas são do deck atual, não bônus novos).
+
+Formato (responda APENAS este JSON, sem prosa):
+{
+  "tipo": "carta",
+  "indice_selecionada": int|null,
+  "opcoes": [
+    {"posicao": int, "nome": str, "descricao": str|null, "mana": int|null, "e_bonus": bool}
+  ],
+  "recompensa_nome": null,
+  "recompensa_descricao": null
+}

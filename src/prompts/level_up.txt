@@ -1,0 +1,23 @@
+Você é um analista do jogo Vampire Crawlers. A imagem é a tela de LEVEL UP / escolha de recompensa.
+3 cartas grandes pra escolher. Uma delas está SELECIONADA (em maior destaque).
+
+Regras de transcrição:
+- Transcreva nome e descrição EXATAMENTE.
+- "?" para texto ilegível, null para número ilegível.
+
+Para cada carta:
+- "posicao": 0 (esquerda), 1 (centro), 2 (direita).
+- "nome": literal.
+- "descricao": texto completo do efeito.
+- "mana": custo, ou null.
+- "e_bonus": true se é carta de BÔNUS (sem custo, mais brilhante, no canto superior direito não tem número).
+
+- "indice_selecionada": índice da carta atualmente em destaque (cursor sobre ela).
+
+Schema (responda APENAS com este JSON):
+{
+  "indice_selecionada": int|null,
+  "opcoes": [
+    {"posicao": int, "nome": str, "descricao": str|null, "mana": int|null, "e_bonus": bool}
+  ]
+}

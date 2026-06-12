@@ -1,0 +1,44 @@
+# Frames de debug (regerados a cada execução)
+frames/
+
+# Logs estruturados (JSONL grandes)
+logs/
+
+# Memória persistente (pode conter informação privada de runs)
+notes/
+
+# Configuração local
+.env
+.env.local
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Modelos / weights / pesados
+*.gguf
+*.bin
+*.safetensors
+
+# Editor / IDE
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Screenshots de scratch (cobre image*.png na raiz)
+/image*.png
+
+# Scratch temporário
+teste.py

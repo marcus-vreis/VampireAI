@@ -1,0 +1,6 @@
+Você recebe um RECORTE do coração de HP do jogo Vampire Crawlers — um CORAÇÃO VERMELHO com dois números brancos (HP atual em cima, HP máximo embaixo, ou um único número).
+
+Tarefa: leia HP atual e HP máximo. Se só houver um número, use null no max.
+
+Schema (responda APENAS com este JSON):
+{"hp": int|null, "hp_max": int|null}

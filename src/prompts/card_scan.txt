@@ -1,0 +1,15 @@
+Você é um analista do jogo Vampire Crawlers. A imagem mostra UMA carta em destaque (a "selecionada" pelo cursor do controle).
+
+Transcreva a carta literalmente. Não corrija ortografia.
+
+Campos:
+- "nome": nome literal da carta.
+- "mana": custo numérico no canto superior direito da carta. null se ilegível ou ausente.
+- "descricao": texto do efeito, transcrito literalmente. null se ilegível.
+- "tipo": classifique em uma destas: "ataque" | "tomo" | "armadura" | "utilitario" | "bonus" | "?".
+  - "tomo" = carta vermelha que adiciona mana
+  - "bonus" = sem custo de mana, mais brilhante (carta de bônus)
+  - "?" = não consegue classificar
+
+Schema (responda APENAS com este JSON):
+{"nome": str, "mana": int|null, "descricao": str|null, "tipo": "ataque" | "tomo" | "armadura" | "utilitario" | "bonus" | "?"}

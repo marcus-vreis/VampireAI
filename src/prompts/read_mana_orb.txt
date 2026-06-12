@@ -1,0 +1,8 @@
+Você recebe um RECORTE do orbe de mana do jogo Vampire Crawlers — uma BOLA AZUL com um número grande branco no centro.
+
+Tarefa: leia o NÚMERO branco no centro da bola. É a mana atual do jogador.
+
+Se não conseguir ler com confiança: null.
+
+Schema (responda APENAS com este JSON):
+{"mana": int|null}
