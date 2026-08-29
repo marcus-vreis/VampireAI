@@ -32,11 +32,6 @@ def select_and_confirm(steps: int) -> None:
     gamepad.confirm()
 
 
-def take_money_from_chest() -> None:
-    """Em baú sem cartas: aperta quadrado para sacar dinheiro."""
-    gamepad.cancel()
-
-
 def end_turn() -> None:
     """Encerra o turno via Bola (Circle). Idealmente, jogar todas as cartas que
     couberem na mana antes — o jogo finaliza turno automaticamente quando

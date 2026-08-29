@@ -28,13 +28,18 @@ Depois da ADR-022 a percepção geométrica saiu do modelo. Restaram:
 | `combat_decide.txt` | escolher a jogada | 1-3 por jogada (ver validação) |
 | `read_mana_orb.txt` | só se o Tesseract não estiver instalado | 0 ou 1 por turno |
 
-### Aposentados
+### Removidos
 
-- `count_cards.txt` — a contagem virou CV + travessia (ADR-019 e ADR-024
-  aposentadas). O arquivo continua no repo para referência histórica.
-- `map.txt` — a direção sai do BFS sobre o minimapa (ADR-017 aposentada).
-- `detect_state.txt` — substituído pelo par `detect_dialog` / `detect_other`,
-  que perguntam dentro de um subgrupo já restrito pela CV.
+Estes prompts foram **apagados**, não arquivados: um prompt que descreve uma
+abordagem aposentada engana quem lê o diretório. O motivo de cada aposentadoria
+está na ADR correspondente, e o conteúdo está no histórico do git.
+
+| Arquivo | Substituído por | ADR |
+|---|---|---|
+| `count_cards.txt` | CV + travessia da mão | ADR-019, ADR-024 |
+| `map.txt` | BFS sobre o minimapa | ADR-017 |
+| `detect_state.txt` | `detect_dialog` + `detect_other`, com a CV restringindo o subgrupo antes | ADR-022 |
+| `combat.txt` | percepção de combate por CV | ADR-022 |
 
 ## Perguntas restritas
 

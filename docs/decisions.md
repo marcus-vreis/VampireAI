@@ -475,3 +475,28 @@ de 15s. Combinado com a ADR-041 (espera adaptativa), o turno saiu de ~22s.
 **Nota de estilo:** estado mutável em nível de módulo é feio, mas os handlers
 recebem apenas `memory` e mudar essa assinatura por causa de um só handler seria
 pior. `forget_hand()` torna o ciclo de vida explícito e testável.
+
+## ADR-044: Remoção do código órfão da refatoração (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** apagados os schemas e prompts que a migração para CV determinística
+deixou sem uso.
+
+**Schemas removidos** (`Card`, `Enemy`, `CombatState`, `MapDirection`,
+`MapAction`, `ChestAction`, `MapNode`, `MapState`): descreviam a percepção de
+combate e o mapa como grafo de nós, ambos substituídos. `src/schemas.py` foi de
+149 para 83 linhas.
+**Mantidos** `LevelUpOption` e `ShopItem`, que parecem órfãos numa busca simples
+mas são usados dentro do próprio arquivo por `LevelUpState`, `ChestState` e
+`ShopState` — todos vivos.
+
+**Prompts removidos** (`count_cards.txt`, `map.txt`, `detect_state.txt`,
+`combat.txt`): a versão anterior de `docs/prompts.md` dizia que eles ficariam
+"para referência histórica". Está errado — um prompt que descreve uma abordagem
+aposentada engana quem abre o diretório procurando o que o agente usa hoje. O
+motivo de cada aposentadoria está na ADR correspondente e o conteúdo está no git.
+
+**`input_exec.take_money_from_chest`**: só chamava `gamepad.cancel()`, e
+`handle_chest` já chama `input_exec.cancel()` direto.
+
+**Verificação:** 121 testes passando e o replay sobre 160 frames com 0 erros
+depois da remoção.
