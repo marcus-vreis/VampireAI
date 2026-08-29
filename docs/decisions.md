@@ -1064,3 +1064,26 @@ no loop (ADR-052). O buraco era só na ferramenta de observação.
 **Padrão que se repete:** três vezes nesta sessão uma precondição correta faltou
 em um dos lugares que precisava dela — o replay, as CLIs, e agora o watch. Escrever
 a regra num lugar não a aplica nos outros.
+
+## ADR-075: A rotulagem verifica se capturou o JOGO, não o foco (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `label.capture_labeled` descarta o frame quando a assinatura é
+`NOT_GAME`, e `session` recusa começar nessa condição.
+**Motivo — bug crítico na ferramenta que eu vinha recomendando há sessões:** a
+rotulagem lê a tecla com `msvcrt.getch()`, o que **exige o terminal focado**.
+Então durante a rotulagem o jogo NUNCA está em primeiro plano, e `mss` captura o
+que estiver por cima. Com o jogo atrás do terminal, a sessão inteira gravaria
+prints do terminal rotulados como "combate" — e o gabarito que deveria medir o
+sensor mediria outra coisa.
+**Por que o foco não serve de guarda aqui, ao contrário do agente e do `--watch`:**
+nesses o foco no jogo é possível e desejável. Na rotulagem é impossível por
+construção. O que importa não é *quem tem o foco*, é *o que está na tela* — e a
+assinatura de CV responde exatamente isso.
+**Requisito real, agora dito na abertura da sessão:** o jogo precisa estar
+**VISÍVEL**, lado a lado ou em outro monitor. Visível e focado são coisas
+diferentes, e a ferramenta pedia a errada.
+**Recusa de saída, não no meio:** melhor não começar que descobrir depois de 50
+frames rotulados.
+**Terceira variação do mesmo padrão nesta sessão** (replay, CLIs, watch, agora
+rotulagem): a precondição certa depende do que a ferramenta faz, e copiar a regra
+de outra sem reexaminar produz guarda errado — ou nenhum.

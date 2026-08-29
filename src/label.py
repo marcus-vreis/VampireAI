@@ -29,7 +29,7 @@ from src.perception import default_glyphbook, read_hp_hybrid, read_mana_hybrid
 from src.vision.cards import detect_card_slots
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
-from src.vision.screen import signature
+from src.vision.screen import Verdict, signature
 from src.window import find_game_window
 
 DATASET_DIR = PROJECT_ROOT / "dataset"
@@ -88,10 +88,27 @@ def _append(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def capture_labeled(state: str, hand_size: int | None, cursor: int | None) -> dict:
-    """Captura o frame atual, move pro dataset e grava o rótulo."""
+def capture_labeled(state: str, hand_size: int | None, cursor: int | None) -> dict | None:
+    """Captura o frame atual, move pro dataset e grava o rótulo.
+
+    None quando o frame não é o jogo. **Aqui o foco não serve de guarda**: pra ler
+    a tecla, o terminal precisa estar focado, então o jogo nunca está. O que vale
+    é perguntar se o frame PARECE o jogo — e a assinatura de CV já responde isso.
+
+    Sem esta checagem, um jogo atrás do terminal produziria um dataset inteiro de
+    prints do terminal rotulados como "combate", e o gabarito que deveria medir o
+    sensor mediria outra coisa.
+    """
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
     shot = grab(state=f"label_{state}")
+    if signature(cv2.imread(str(shot))).verdict is Verdict.NOT_GAME:
+        shot.unlink(missing_ok=True)
+        logger.error(
+            "A captura não é o jogo. Deixe a janela do Vampire Crawlers VISÍVEL "
+            "(lado a lado ou em outro monitor) — ela não precisa estar focada, "
+            "mas precisa aparecer na tela."
+        )
+        return None
     target = DATASET_DIR / shot.name
     shot.replace(target)
 
@@ -117,7 +134,18 @@ def _report(record: dict) -> None:
 
 
 def session(ask_details: bool) -> int:
-    print("Sessão de rotulagem. Deixe o jogo visível e volte aqui pra marcar.\n")
+    print("Sessão de rotulagem.")
+    print(
+        "O jogo precisa ficar VISÍVEL enquanto você digita aqui — lado a lado ou\n"
+        "em outro monitor. Focado ele não vai estar (o terminal precisa do foco\n"
+        "pra ler a tecla), e não precisa.\n"
+    )
+    if signature(cv2.imread(str(grab(state="label_check")))).verdict is Verdict.NOT_GAME:
+        logger.error(
+            "A captura não está mostrando o jogo. Ajeite as janelas e rode de novo — "
+            "sem isso o dataset inteiro sairia com prints do terminal."
+        )
+        return 2
     print(_menu())
     total = 0
     while True:
@@ -132,6 +160,8 @@ def session(ask_details: bool) -> int:
             hand_size = _ask_int("quantas cartas na mão? (enter pula) ")
             cursor = _ask_int("índice do cursor, 0 = mais à esquerda? (enter pula) ")
         record = capture_labeled(state, hand_size, cursor)
+        if record is None:
+            continue
         _report(record)
         total += 1
     print(f"\n{total} frames gravados em {DATASET_DIR}")
