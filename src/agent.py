@@ -574,6 +574,13 @@ def preflight(countdown_s: int = _COUNTDOWN_S) -> bool:
 
 
 def loop(max_iters: int | None = None) -> int:
+    """Roda o agente até o limite de iterações, um erro fatal, ou Ctrl+C.
+
+    **Para parar às pressas, basta alternar pro terminal.** O agente recusa agir
+    sem o jogo em primeiro plano (ADR-052), então tirar o foco o congela na hora.
+    É o failsafe que a ADR-014 registrou como ausente ao abandonar o pyautogui —
+    apareceu de graça quando a checagem de foco entrou por outro motivo.
+    """
     PATHS.ensure()
     if not preflight():
         return 2
@@ -607,6 +614,11 @@ def loop(max_iters: int | None = None) -> int:
                 # Insistir não adianta: o servidor responde e o modelo não roda.
                 logger.error("{}", e)
                 return 3
+            except KeyboardInterrupt:
+                # Sair por Ctrl+C é uso normal, não falha. O `finally` solta o
+                # gamepad e imprime o resumo, que é o que interessa.
+                logger.info("Interrompido pelo usuário")
+                return 0
             except (ValueError, RuntimeError) as e:
                 parse_fails += 1
                 logger.error("Falha no turno ({}/{}): {}", parse_fails, _MAX_PARSE_FAILS, e)

@@ -71,3 +71,17 @@ def test_conta_passos_e_estados_no_loop(capsys):
     ):
         agent.loop(max_iters=3)
     assert "RESUMO DA RUN" in capsys.readouterr().out
+
+
+def test_ctrl_c_sai_limpo_com_resumo(capsys):
+    """Sair por Ctrl+C é uso normal, não falha — e é quando mais se quer o resumo."""
+    with (
+        mock.patch.object(agent.time, "sleep"),
+        mock.patch.object(agent, "gamepad") as pad,
+        mock.patch.object(agent, "preflight", return_value=True),
+        mock.patch.object(agent, "default_memory", return_value=mock.MagicMock()),
+        mock.patch.object(agent, "_step", side_effect=KeyboardInterrupt),
+    ):
+        assert agent.loop(max_iters=5) == 0
+    assert "RESUMO DA RUN" in capsys.readouterr().out
+    assert pad.reset.call_count == 1, "o gamepad tem que ser solto"

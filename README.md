@@ -107,6 +107,10 @@ python -m src.gamepad --test    # foque o jogo: deve ver botões sendo apertados
 
 ## Uso
 
+> **Para parar o agente às pressas, alterne para o terminal.** Ele recusa agir sem
+> o jogo em primeiro plano, então tirar o foco o congela na hora — e `Ctrl+C`
+> encerra limpo, soltando o gamepad e imprimindo o resumo da run.
+
 ```bash
 python -m src.agent --confirm                       # loop completo (consome GPU)
 python -m src.agent --confirm --iters 10            # bounded para teste

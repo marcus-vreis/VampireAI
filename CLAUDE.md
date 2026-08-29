@@ -97,6 +97,8 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
 
 ## Regras
 - Nunca rodar `agent.py` sem confirmar (consome GPU pesado)
+- **Failsafe: alternar pro terminal congela o agente.** Ele não age sem o jogo em
+  primeiro plano. Não remover essa checagem sem pôr outra no lugar
 - **Antes de afinar um detector de CV, olhar a máscara.** Iterar em limiar no
   escuro custa mais que renderizar o overlay e ver o que está sendo pego
 - **Medir antes de decidir.** Todo limiar deste projeto tem número que o

@@ -77,3 +77,22 @@ def test_cli_avisa_mas_nao_bloqueia():
 
     with mock.patch.object(window, "find_game_window", return_value=janela(False)):
         window.warn_if_unfocused()  # não levanta
+
+
+def test_tirar_o_foco_congela_o_agente():
+    """Failsafe emergente: alternar pro terminal para o agente na hora.
+
+    A ADR-014 registrou como risco aceito não haver `pyautogui.FAILSAFE` global
+    ao adotar o gamepad virtual. A checagem de foco entrou por outro motivo
+    (captura pegando a Steam) e resolveu isso de graça.
+    """
+    from src.states import GameNotFocusedError
+
+    chamadas = []
+    with (
+        mock.patch.object(agent, "find_game_window", return_value=janela(False)),
+        mock.patch.object(agent, "grab", side_effect=lambda *a, **k: chamadas.append(1)),
+    ):
+        with pytest.raises(GameNotFocusedError):
+            agent._require_focus()
+    assert chamadas == [], "nem chega a capturar, quanto mais a agir"

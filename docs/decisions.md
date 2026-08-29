@@ -999,3 +999,26 @@ uma contagem de 5s antes de começar. Reprovar impede o loop de dar um passo.
 
 A linha do modelo mostra os dois nomes: quem configurou `TEXT_MODEL` confirma que
 pegou, e quem não configurou vê os dois iguais e entende por quê (ADR-031).
+
+## ADR-071: O failsafe que apareceu de graça (2026-08-29)
+**Data:** 2026-08-29
+**Observação, não decisão nova:** o agente recusa agir sem o jogo em primeiro
+plano (ADR-052). Como consequência, **alternar pro terminal o congela na hora** —
+e é assim que se para uma run às pressas.
+**Por que registrar:** a ADR-014, ao adotar o gamepad virtual, listou como
+trade-off aceito que "não há `pyautogui.FAILSAFE` global; mitigação: o gamepad só
+afeta a janela focada". Era mitigação passiva — se o agente enlouquecesse, não
+havia gesto pra pará-lo sem chegar no terminal, e chegar no terminal era
+justamente o problema.
+**A checagem de foco entrou por outro motivo** (a captura estava pegando a página
+da Steam) e resolveu isso sem querer: tirar o foco é o gesto, e o agente para
+antes mesmo de capturar. Está anunciado no README e virou regra no `CLAUDE.md` —
+não remover sem pôr outra coisa no lugar.
+
+## ADR-072: `Ctrl+C` é saída normal (2026-08-29)
+**Decisão:** `KeyboardInterrupt` é tratado no loop: registra, devolve 0, e deixa o
+`finally` soltar o gamepad e imprimir o resumo.
+**Motivo:** interromper com Ctrl+C é o uso esperado, não uma falha — e é
+justamente quando mais se quer ver o resumo do que aconteceu. Antes o traceback
+subia até o topo; o `finally` rodava, mas a saída ficava suja e o código de saída,
+errado.
