@@ -49,6 +49,15 @@ _HAND: HandScan | None = None
 _MAX_PARSE_FAILS = 3
 _LOOP_SLEEP_S = 0.4
 _MEMORY_RECENT_EVENTS = 8
+# Estados cujo histórico ajuda a decidir. Navegação no mapa e destravamentos são
+# ruído operacional: geram um evento por passo e afogavam a memória — num prompt
+# de combate real, 15 eventos de mapa e 8 de destravamento contra ZERO de
+# combate. O log do loguru continua registrando tudo; a memória é a história da
+# run, não o diário de bordo.
+_DECISION_RELEVANT = ("combat", "level_up", "chest", "boss_chest", "stage_complete")
+# Transição de tela marca a estrutura da run e é útil no arquivo, mas não diz
+# nada sobre O QUE decidir: "transição → combat" não ajuda a escolher carta.
+_NO_SIGNAL = "transição →"
 _MAX_ILLEGAL_RETRIES = 2
 
 
@@ -60,8 +69,8 @@ def _memory_block(memory: Memory | None) -> str:
     """
     if memory is None:
         return ""
-    summary = memory.summary().strip()
-    recent = memory.recent(_MEMORY_RECENT_EVENTS)
+    summary = "\n".join(_relevant(memory.summary().splitlines())).strip()
+    recent = _relevant(memory.recent(_MEMORY_RECENT_EVENTS * 3))[-_MEMORY_RECENT_EVENTS:]
     if not summary and not recent:
         return ""
     parts = ["", "MEMÓRIA DA RUN (contexto acumulado):"]
@@ -72,6 +81,19 @@ def _memory_block(memory: Memory | None) -> str:
         parts.append("Eventos recentes:")
         parts.extend(f"- {e}" for e in recent)
     return "\n".join(parts)
+
+
+def _relevant(linhas: list[str]) -> list[str]:
+    """Só o que orienta uma decisão. Linhas sem marca de estado passam.
+
+    Uma linha sem `state=` é prosa do sumarizador, que já é resumo de tudo.
+    """
+    return [
+        linha
+        for linha in linhas
+        if _NO_SIGNAL not in linha
+        and ("state=" not in linha or any(f"state={s}" in linha for s in _DECISION_RELEVANT))
+    ]
 
 
 def _combat_prompt(scan: HandScan, memory: Memory | None, complaint: str | None) -> str:
@@ -248,7 +270,6 @@ def handle_map(memory: Memory | None = None) -> None:
         "Mapa: em {} olhando {} → {} (alvo: {})",
         minimap.player, minimap.facing.value, step.turn.value, step.reason,
     )
-    _remember(memory, f"mapa: {step.turn.value} rumo a {step.reason}", "map")
     if step.turn is Turn.BACK:
         input_exec.turn_right()
         time.sleep(GAMEPAD.between_actions_s)
@@ -392,7 +413,7 @@ _NUDGE_ACTION = {
 }
 
 
-def _try_unstick(detector: StallDetector, memory: Memory) -> bool:
+def _try_unstick(detector: StallDetector, memory: Memory) -> bool:  # noqa: ARG001
     """Empurra um botão quando a tela não muda. False quando esgotou as tentativas.
 
     Cobre telas que nenhum handler conhece — as duas confirmações que a evolução
@@ -403,7 +424,6 @@ def _try_unstick(detector: StallDetector, memory: Memory) -> bool:
     if nudge is None:
         return not detector.exhausted
     logger.warning("Tela não muda há {} passos — tentando {}", detector.patience, nudge.value)
-    memory.append(f"destravando com {nudge.value}", state="stall")
     _NUDGE_ACTION[nudge]()
     return True
 

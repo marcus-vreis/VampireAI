@@ -110,3 +110,46 @@ def test_prompt_de_combate_repassa_a_recusa():
     prompt = _combat_prompt(_scan(), None, "a carta custa 2 e você tem 1")
     assert "rejeitada" in prompt
     assert "custa 2" in prompt
+
+
+def _linhas(*eventos):
+    return [f"[2026-01-01T00:00:00+00:00] state={s} | {t}" for s, t in eventos]
+
+
+def test_bloco_ignora_ruido_de_mapa_e_destravamento():
+    """Medido num prompt real: 15 eventos de mapa e 8 de destravamento contra
+    ZERO de combate. Eram 578 tokens disputando espaço com a mão de cartas."""
+    from src.agent import _relevant
+
+    ruido = _linhas(
+        ("map", "mapa: frente rumo a inimigo mais próximo"),
+        ("stall", "destravando com confirm"),
+        ("deck", "transição → deck"),
+    )
+    assert _relevant(ruido) == []
+
+
+def test_bloco_mantem_jogadas_e_escolhas():
+    from src.agent import _relevant
+
+    util = _linhas(
+        ("combat", "combate: jogou Otto — combo crescente"),
+        ("level_up", "level up: idx=0 (sinergia com o deck)"),
+        ("chest", "baú carta: idx=1"),
+    )
+    assert _relevant(util) == util
+
+
+def test_transicao_nao_informa_decisao():
+    """"transição → combat" não ajuda a escolher carta."""
+    from src.agent import _relevant
+
+    assert _relevant(_linhas(("combat", "transição → combat"))) == []
+
+
+def test_prosa_do_sumarizador_passa():
+    """Linha sem marca de estado é resumo do modelo, que já condensou tudo."""
+    from src.agent import _relevant
+
+    prosa = ["- Venceu dois combates e perdeu 12 de HP"]
+    assert _relevant(prosa) == prosa

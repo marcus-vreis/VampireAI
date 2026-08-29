@@ -674,3 +674,24 @@ nos dois lados.
 ~2.200 caracteres, em vez de crescer indefinidamente.
 **Lição:** o que vai dentro de um prompt precisa de teto por construção. "O
 accordion cuida disso" era verdade só no caminho feliz.
+
+## ADR-054: Memória injetada filtrada por relevância (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `_memory_block` injeta só eventos de estados que orientam decisão
+(combate, level up, baú, fim de fase) e descarta transições de tela. Navegação no
+mapa e destravamentos deixam de ir pra memória — o `loguru` continua registrando.
+**Motivo — medido, depois da ADR-053:** com o teto no resumo, o bloco caiu pra 578
+tokens, mas isso ainda era **45% de um prompt de combate de 1292 tokens**. Olhando
+o conteúdo: 15 eventos de navegação no mapa, 8 de destravamento, 1 de transição —
+e **zero de combate**. Era histórico irrelevante disputando espaço com a mão de
+cartas.
+**Causa:** `handle_map` gravava um evento por passo, e cada passo dura ~1s. Em
+qualquer run, a navegação afoga tudo o mais. Memória de run e diário de bordo são
+coisas diferentes; estavam no mesmo lugar.
+**Transições também saem:** "transição → combat" marca a estrutura da run e é útil
+no arquivo, mas não diz nada sobre O QUE decidir.
+**Medido:** 578 → 18 tokens no mesmo `notes.md`. Somando a ADR-053, o bloco saiu
+de ~63.580 para ~18 tokens.
+**O que sobra é o que importa:** "combate: jogou Otto — combo crescente",
+"level up: idx=0 (sinergia com o deck)". Continuidade de plano, que era o motivo
+da ADR-020 existir.
