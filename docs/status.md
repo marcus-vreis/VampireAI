@@ -266,46 +266,104 @@ Saiu input real e desconectou o controle no jogo aberto. A trava agora mora em
 
 ## Próximo
 
+### Depende de você jogar
+
 1. **Sessão de rotulagem** — `python -m src.label --details`. Alvo: 60-100 frames
-   cobrindo baú, chefe, game over, shop e as fases 2+. É o que transforma
-   "parece melhor" em número e o que a comparação entre modelos vai usar.
-2. **Ligar a suíte de regressão ao dataset** — hoje `tests/test_vision.py` usa
-   frames rotulados à mão de `frames/`, que é gitignored. Migrar pra `dataset/`.
-3. **Rodar no jogo** — `python -m src.agent --confirm --iters 10` num combate
-   fácil. Nada do sensor novo foi exercitado contra o jogo rodando ainda; toda
-   validação até agora é sobre frames salvos.
-4. **Testar um modelo de texto no `TEXT_MODEL`.** A infraestrutura está pronta
-   (ADR-031) e a baseline está medida (ADR-032). Baixar um candidato e rodar
-   `python -m src.bench --models qwen2.5vl:7b,candidato --scenarios 40`. Meta:
-   subir "regra" acima de 60% sem perder "legal".
-5. **Baú e pedra no minimapa** — faltam templates para baú e obstáculo. Sem o de
-   pedra, o BFS pode tentar atravessar bloqueio; sem o de baú, o agente ignora
-   recompensa no caminho. Precisa de frames que os contenham.
-6. **Features de aresta no mapa** — bônus e baús encostados em parede são
+   cobrindo baú, chefe, game over, shop e as fases 2+. Vira suíte de regressão e
+   é o conjunto que a comparação entre modelos vai usar.
+2. **Rodar no jogo** — `python -m src.agent --confirm --iters 10`. Nenhuma run
+   aconteceu ainda; toda validação é sobre frames salvos e simulação. **O jogo
+   precisa estar em primeiro plano** (ADR-052).
+3. **Baú, obstáculo e saída de fase no minimapa** — faltam os sprites. Sem o de
+   obstáculo o BFS pode tentar rota bloqueada; sem o de saída, o fim de fase
+   depende do quarto degrau da navegação (ADR-059), que anda pro ponto conhecido
+   mais distante em vez de mirar a saída.
+4. **Confirmar o limiar do estado `deck`** — repousa sobre UMA observação
+   (ADR-037), e já causou uma regressão (ADR-049).
+
+### Depende de baixar um modelo
+
+5. **Testar um `TEXT_MODEL` dedicado.** Infraestrutura pronta (ADR-031), baseline
+   medida com margem (ADR-057): `legal 92±7%`, `regra 55±13%` em 60 cenários.
+   Rodar `python -m src.bench --models qwen2.5vl:7b,candidato --scenarios 60`.
+   **Diferença menor que a margem não é diferença.**
+
+### Dá pra fazer agora
+
+6. **Ligar a suíte de regressão ao `dataset/`** — hoje `tests/test_vision.py` usa
+   frames rotulados à mão de `frames/`, que é gitignored. Depende do item 1.
+7. **Features de aresta no mapa** — bônus e baús encostados em parede são
    desenhados deslocados pra borda da célula (visível nos losangos ao lado das
-   caveiras). Hoje eles entram na área andável mas não são alvos. A estrutura
-   certa é grade de células + features presas a arestas.
-7. **Popular o livro de glifos** — na primeira run, cada algarismo custa uma
-   chamada de modelo até aparecer duas vezes. Depois disso a leitura é local.
-   Instalar o Tesseract acelera esse aquecimento, mas não é mais necessário.
-8. **Fluxo de evolução de carta** — o antitravamento (ADR-035) evita que a run
-   morra ali, mas o tratamento correto (escolher duas cartas, confirmar duas
-   vezes) precisa de frames reais pra ser escrito. Capturar durante a rotulagem.
-9. **Fim de fase** — depois do chefe morto, `nav.plan` não acha inimigo nem chefe
-   e cai em explorar fronteira. Deveria procurar a saída (pá no chão / quadrado
-   preto com o ícone do personagem). Também precisa de frames.
+   caveiras). Hoje entram na área andável mas não são alvos.
+8. **Testes dos handlers de uma linha** (`stage_complete`, `game_complete`,
+   `title`, `menu`). Retorno esperado baixo — os caminhos com lógica já estão
+   cobertos.
+
+### Resolvidos desde a última revisão desta lista
+
+- ~~Fluxo de evolução de carta~~ — o estado `notice` (ADR-046) cobre as duas telas
+  de confirmação que `jogo.md` descreve. Não precisava de frames, precisava de uma
+  saída no prompt.
+- ~~Fim de fase devolvendo `None`~~ — ADR-059, testado por simulação (apagar os
+  ícones de um mapa real reproduz o estado).
+- ~~Popular o livro de glifos~~ — funciona; validado ao vivo lendo mana=4 em 24
+  amostras e HP=(61,61) em 6.
 
 ## Decisões abertas
-- Trocar o VLM de visão: medir no dataset antes de baixar modelo.
-- Botão de "finalizar turno": validado como Bola/Circle, confirmar em fase 2+.
+- Trocar o VLM de visão: medir antes de baixar. O bench agora declara margem.
 - `dataset/` versionado (é a suíte de regressão) vs. peso no repo.
 
 ## Bloqueios
 - Driver ViGEm Bus precisa ser instalado manualmente no Windows (uma vez). vgamepad não instala sozinho.
 
 ## Aprendizados a preservar
-- Qwen2.5-VL 7B alucina nomes "corrigindo" — prompt deve forçar transcrição literal.
-- Cartas sobrepostas se perdem em prompt genérico — exigir contagem com obstruidas.
+
+### Sobre o jogo
 - UI em PT-BR — manter prompts em PT-BR.
-- Auto-detecção de janela centralizada continua válida (vide `_primary_monitor_rect`).
-- Gamepad virtual (vgamepad) entra antes do PAUSE/FAILSAFE do pyautogui — sem failsafe global agora; risco mitigado por o gamepad só afetar o jogo focado.
+- O círculo de custo da carta **selecionada pulsa** entre azul e magenta.
+- A carta selecionada sobe e **cobre o círculo da vizinha à direita**.
+- Nas telas de escolha a selecionada é a mais **ALTA**, não a maior: cartas de
+  bônus trazem um orbe decorativo maior que qualquer círculo de custo.
+- Ícones do minimapa são cinza 136, **abaixo** do limiar de piso — precisam ser
+  somados à área andável ou viram buracos no BFS.
+- O jogo **escurece o HUD inteiro** quando um painel abre.
+- O minimapa mostra salas reveladas mas ainda **sem corredor aberto**: 15
+  componentes conexas no frame de referência.
+- Telas de level up podem ter **4 opções**, não só 3.
+
+### Sobre o modelo
+- Qwen2.5-VL 7B alucina nomes "corrigindo" — o prompt força transcrição literal.
+  O ruído é inofensivo: a identidade só precisa ser consistente, e o hash do
+  `CardDB` não depende do texto.
+- **13% das leituras de carta voltam com custo ilegível.** Ampliar a imagem não
+  ajuda (ADR-056, resultado negativo). O caminho é outro modelo.
+- **Lista fechada de opções num prompt precisa de saída.** Sem ela, "não sei"
+  vira resposta errada com cara de certeza — `detect_dialog` sem `notice`
+  respondia "level_up" para um painel de aviso.
+
+### Sobre método, que custou caro aprender
+- **Olhar a máscara antes de afinar limiar.** Iterar em número às cegas não
+  converge; renderizar o overlay resolveu na primeira tentativa.
+- **Medir antes de otimizar.** O gargalo da travessia era um `sleep` fixo (81%
+  do custo), não a visão computacional (3.3ms).
+- **Testar o caminho, não só a peça.** `_hp_line` tinha teste verde e o HP não
+  chegava ao prompt.
+- **Contar o que entra no prompt.** A memória injetava ~63 mil tokens por
+  decisão; ninguém tinha medido em cinco sessões.
+- **Declarar a margem de erro.** A baseline do bench foi publicada com n=25 e
+  precisão que não tinha; duas execuções idênticas deram 60% e 48%.
+- **Observar o jogo rodando acha o que frame salvo não acha** — o estado `deck`,
+  o HUD escurecido e a captura pegando a Steam saíram todos daí.
+- **Nem toda lacuna de dados precisa esperar por dados.** Apagar ícones de um
+  mapa real simulou o fim de fase e expôs uma falha dada como bloqueada.
+- **Escrever o primeiro teste de um caminho tem achado bug na primeira leitura.**
+  Aconteceu em baú, level up e no loop principal.
+- **Refatoração larga sem teste no consumidor gera regressão.** Três correções
+  desta sessão foram regressões introduzidas nela mesma.
+
+### Riscos vivos
+- Sem `pyautogui.FAILSAFE` global. Mitigado por: gamepad só afeta a janela
+  focada, `set_dry_run` corta antes do driver, e `reset()` no `finally`.
+- Driver ViGEm Bus precisa ser instalado manualmente no Windows (uma vez).
+- `mss` captura uma REGIÃO DA TELA: overlay sempre-no-topo ainda entra no frame.
+  O foco (ADR-052) cobre o caso comum, não todos.
