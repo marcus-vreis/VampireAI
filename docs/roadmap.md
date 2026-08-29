@@ -1,40 +1,80 @@
 # Roadmap
 
-Projeto incremental em 6 fases. Cada fase fecha com entregável visível.
+Projeto incremental. Cada fase fecha com entregável visível.
 
-## Fase 0 — Captura (concluída no setup)
-Screenshot da janela do jogo, salva em `frames/`. Pipeline VLM testado isolado.
-**Entregável:** screenshot funcional + `python -m src.llm --ping` retorna resposta.
+Status detalhado e TODOs em [`status.md`](status.md). Decisões e o porquê delas em
+[`decisions.md`](decisions.md).
 
-## Fase 1 — Input automation
-Mouse e teclado simulados via pyautogui. Sequência fixa hardcoded para validar que botões chegam ao jogo.
-**Entregável:** GIF curto de script abrindo o jogo e clicando em "iniciar run".
+## Fase 0 — Captura ✅
+Screenshot da janela do jogo. Pipeline de modelo testado isolado.
+**Entregável:** `python -m src.capture --once` e `python -m src.llm --ping`.
 
-## Fase 2 — Percepção estruturada
-Detector de estado + extração de cartas/HP/mana via VLM (com prompt cirúrgico) + OCR (pytesseract) para números. Saída em pydantic schemas.
-**Entregável:** `python -m src.perception --frame X.png` retorna JSON estruturado completo do estado.
+Evoluiu: a captura passou de retângulo calculado para o **client area real** da
+janela via Win32 (ADR-023). O retângulo calculado deixava o frame deslocado
+conforme a janela tivesse barra de título ou fosse movida, e todo recorte de UI
+saía do lugar junto.
 
-## Fase 3 — Combate fechado
-Loop completo só em combate. VLM decide ordem de cartas via tool use, parser converte para coords, executor clica. Sem memória ainda.
-**Entregável:** vídeo de 1-2 min do agente vencendo um combate. Post de LinkedIn.
+## Fase 1 — Input ✅
+Gamepad virtual: `vgamepad` → driver ViGEm Bus → DualShock 4 emulado (ADR-014).
 
-## Fase 4 — Run completa
-Múltiplos estados (mapa, level up, loja, baú). Memória persistente em `notes.md`. Sumarização accordion a cada N turnos.
-**Entregável:** timelapse de 3-5 min de uma run completa. Thread técnica.
+Substituiu mouse + coordenadas. Cartas e opções são escolhidas por destaque
+visual ("a maior") + travessia (← →), o que eliminou toda a calibração de UI.
+**Entregável:** `python -m src.gamepad --test` movimenta o jogo.
+
+## Fase 2 — Percepção ✅
+**Reescrita na ADR-022.** A percepção geométrica saiu do modelo e foi pra CV:
+estado da tela, contagem de cartas, cursor, mana e navegação vêm de
+`src/vision/`, em ~19ms e sem alucinar. O modelo ficou com semântica.
+
+Medir foi o que forçou a mudança: de 39 frames que eram o mapa, o VLM rotulava ao
+menos 9 como outra coisa.
+**Entregável:** `python -m src.vision.debug frames/x.png` anota o frame com tudo
+que a CV enxerga.
+
+## Fase 3 — Combate ✅
+Travessia da mão (não precisa saber o total antes, ADR-024), cache de carta por
+hash perceptual (ADR-025), e jogada do modelo **validada** contra mana e índices
+antes de executar (ADR-026).
+**Entregável:** vídeo do agente vencendo um combate. *Pendente: rodar contra o
+jogo aberto — todo o sensor novo foi validado só sobre frames salvos.*
+
+## Fase 4 — Run completa 🔜 (fase atual)
+Meta: **zerar a fase 1 do jogo.**
+
+Falta:
+- Sessão de rotulagem (`python -m src.label`) pra virar suíte de regressão.
+- Rodar ponta a ponta contra o jogo.
+- Templates de baú e obstáculo no minimapa.
+- Features de aresta no mapa: bônus encostados em parede são desenhados
+  deslocados pra borda da célula, não no centro.
+
+**Entregável:** timelapse de uma run completa.
 
 ## Fase 5 — Ângulo de pesquisa
-Escolher uma direção:
-- A: comparar modelos open-weight pequenos (Qwen2.5-VL vs InternVL vs Llama 3.2 Vision)
-- B: ablation de componentes do harness (sem memória, sem OCR, sem detector de estado)
-- C: estresse de generalização (dificuldades altas, runs longas)
+A infraestrutura já existe, o que muda a pergunta de "como medir?" pra "o que
+medir?".
 
-**Entregável:** post técnico longo, repo limpo com README sério, gráficos.
+- **A — comparar modelos.** `python -m src.bench --models a,b` já roda, com
+  gabarito derivado (a legalidade de uma jogada é regra que o código conhece,
+  então não precisa de rótulo humano). Baseline registrada na ADR-032.
+- **B — ablation do harness.** A separação CV/modelo é uma costura limpa: dá pra
+  medir o custo de devolver cada peça ao modelo. Quanto piora sem o detector de
+  CV? Sem o cache de carta? Sem o validador de jogada?
+- **C — generalização.** Dificuldades altas, fases avançadas, runs longas.
+
+O ângulo mais forte hoje é o **B**: o projeto tem o antes e o depois medidos no
+mesmo jogo, com o mesmo modelo. É evidência direta de que o andaime importa mais
+que o tamanho do modelo — que é justamente a lição que motivou o projeto.
+
+**Entregável:** post técnico longo, gráficos, repo limpo.
 
 ## Fase 6 — Publicação (opcional)
-Workshop paper, com baseline rigoroso, múltiplas seeds, intervalos de confiança.
-**Entregável:** paper 4-8 páginas em workshop NeurIPS/ICLR/BRACIS/ENIAC.
+Workshop paper com baseline rigoroso, múltiplas seeds, intervalos de confiança.
+**Entregável:** paper de 4-8 páginas.
 
 ## Princípios
 - Não engenharia: cada fase resolve um problema concreto da anterior
-- Sem otimização prematura: medir antes de mexer
+- **Medir antes de mexer.** Todo limiar deste projeto tem número que o justifica
+- **Olhar a máscara antes de afinar limiar.** Ajustar número às cegas custa mais
+  que renderizar o overlay e ver o que está sendo pego
 - Cada fase tem entregável compartilhável; se parar aqui, ainda tem valor

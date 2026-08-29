@@ -1,67 +1,116 @@
 # Estados do jogo
 
-Vampire Crawlers tem ~12 estados distinguíveis. Detector roda em cada captura e roteia para handler específico. Input é via **gamepad virtual** (vgamepad → ViGEm → DualShock 4 emulado), não mouse.
+12 estados. O detector roda a cada captura e roteia para um handler. Input é
+gamepad virtual (vgamepad → ViGEm → DualShock 4 emulado).
+
+## Detecção: CV primeiro, VLM só no que sobra
+
+Antes a detecção era 100% VLM. Era a chamada mais frequente do agente (95 de 319
+no log) e a menos confiável: dos 39 frames que são o mapa, o modelo rotulou ao
+menos 9 como outra coisa — a ponto de rodar um scan de cartas de 4 passos em cima
+do mapa, apertando ← quatro vezes enquanto andava pela masmorra.
+
+`src/vision/screen.py` mede três sinais e emite um veredito em ~19ms:
+
+| Sinal | Mapa | Combate | Diálogo |
+|---|---|---|---|
+| pergaminho no minimapa | 0.62-0.76 | ≤ 0.32 | 0.05-0.07 |
+| painel ardósia no centro | < 0.03 | < 0.06 | 0.56-0.63 |
+| círculos de custo na mão | 0 | ≥ 1 | 0 |
+
+As margens são grandes, então a separação é confiável. O veredito é um de:
+
+- `MAP`, `COMBAT` → estado final, sem chamar modelo
+- `DIALOG` → VLM escolhe entre level_up / chest / boss_chest / chest_card_target / shop
+- `UNKNOWN` → VLM escolhe entre title / menu / game_over / stage_complete / game_complete
+- `NOT_GAME` → a captura não pegou o jogo; levanta `NotTheGameError` em vez de chutar
+
+O último caso é real: há frames salvos onde a captura pegou outra janela. Antes o
+VLM inventava um estado para eles.
 
 ## Lista
-| Estado | Quando | Identificadores visuais |
+
+| Estado | Quando | Como é detectado |
 |---|---|---|
-| `title` | Tela inicial | Logo "Vampire Crawlers", botão "Jogar" |
-| `map` | Visão 1ª pessoa de masmorra | Mini-mapa de tabuleiro no canto, parede/corredor à frente |
-| `combat` | Combate ativo | Inimigos no topo, cartas na barra inferior; uma carta em DESTAQUE |
-| `level_up` | Após vitória | 3 cartas grandes, uma em destaque |
-| `chest` | Baú aberto comum | Cartas / bônus / evolução / mensagem vazia |
-| `chest_card_target` | Tela secundária do baú | "Aplicar bônus em qual carta do deck?" |
-| `boss_chest` | Baú pós-chefe | UI igual a chest, contexto pós-combate de boss |
-| `stage_complete` | Pá no chão à frente, ícone próxima fase no mapa | Fim de fase |
-| `game_complete` | Tela "PARABÉNS" | Jogo zerado |
-| `game_over` | Morte | Tela de derrota |
-| `menu` | Pausa | Overlay |
-| `shop` | Loja (raro) | Cartas com preço em ouro |
+| `combat` | inimigos no topo, cartas embaixo | CV: círculos de custo presentes |
+| `map` | visão 1ª pessoa com minimapa | CV: pergaminho visível |
+| `level_up` | "Subiu de nível!" | CV → VLM (subgrupo diálogo) |
+| `chest` | baú comum aberto | CV → VLM (subgrupo diálogo) |
+| `chest_card_target` | "aplicar bônus em qual carta?" | CV → VLM (subgrupo diálogo) |
+| `boss_chest` | baú pós-chefe | CV → VLM (subgrupo diálogo) |
+| `shop` | cartas com preço em ouro | CV → VLM (subgrupo diálogo) |
+| `stage_complete` | pá no chão, ícone de próxima fase | CV → VLM (subgrupo outros) |
+| `game_complete` | tela "PARABÉNS" | CV → VLM (subgrupo outros) |
+| `title` | logo do jogo | CV → VLM (subgrupo outros) |
+| `menu` | abas Unlocks / Settings / Crawlers | CV → VLM (subgrupo outros) |
+| `game_over` | tela de derrota | CV → VLM (subgrupo outros) |
 
-## Detecção
-1ª versão: VLM com prompt de múltipla escolha (`src/prompts/detect_state.txt`). Sem template matching ainda. Latência aceita: ~3s por chamada.
-
-## Tratamento por estado (gamepad)
+## Tratamento por estado
 
 ### `combat`
-1. Capture frame inicial → percepção (`CombatState`: total_cartas, cursor, mana, inimigos).
-2. **Scan sequencial**: cursor inicia mais à direita. Para cada carta: pegue print, classifique (`CardScanFrame`), aperte ←. Repete `total_cartas` vezes.
-3. Modelo decide UMA ação (`CombatAction`: jogar carta idx N, ou finalizar turno) com base no scan completo.
-4. Executor calcula delta = `idx_alvo - cursor_atual`, navega N passos (← ou →), aperta X.
-5. Retira essa carta da mão, recaptura, repete (mas mana atual mudou; cursor pode ter resetado).
 
-**Estratégia central:** seguir ordem CRESCENTE de custo de mana (combo buffado). Tomos vermelhos (custo 0) primeiro pra ganhar mana.
+1. `scan_combat_hand` percorre a mão com ← lendo uma carta por passo.
+   **Não recebe o total** — para sozinho quando o cursor volta a uma posição já
+   vista. Isso resolve a oclusão: a carta selecionada sobe e cobre o círculo de
+   custo da vizinha à direita, então contar num frame só subestima em 1.
+2. Cada carta é identificada pelo `CardDB` (hash perceptual). Só há chamada ao
+   VLM na primeira aparição de cada carta.
+3. O VLM decide UMA jogada. `src/combat.py` valida contra mana e índices; se for
+   ilegal, repergunta com o motivo. No 3º erro, joga pela regra de `jogo.md`.
+4. Executor navega `alvo − cursor` passos e aperta X.
+
+**Estratégia central:** ordem CRESCENTE de custo de mana (combo buffado). Tomos
+vermelhos (custo 0-1) primeiro para ganhar mana.
 
 ### `map`
-Pergunta visual mínima: "alvo está à frente, esquerda, direita ou atrás?" (`MapDirection`).
-Micro-ações:
-- frente → ↑ (D-pad)
-- esquerda → L2 (girar)
-- direita → R2 (girar)
-- atrás → R2 + R2
-- no_alvo → ↑ (entrar na sala)
 
-Repete até `no_alvo`. Erros não acumulam (cada step recaptura).
+Sem chamada de modelo nenhuma. Três passos:
 
-Custo: ~4-8 chamadas VLM por nó × 3-5s ≈ 15-40s. Aceita porque mapa não é caminho crítico.
+1. `minimap.locate` acha o minimapa pelo bloco de pergaminho e **exige ≥50% de
+   pergaminho na caixa** — senão, num frame de combate, a arte das cartas passava
+   por mapa e um círculo de custo azul virava a seta do jogador.
+2. `minimap.read_minimap` extrai posição e direção do jogador (a seta azul é o
+   único azul saturado ali) e a máscara de piso. Ícones entram no piso: são cinza
+   136, abaixo do limiar, e sem isso viravam buracos que impediam o BFS de chegar
+   no inimigo.
+3. `nav.plan` escolhe o alvo — inimigo alcançável mais próximo, depois chefe,
+   depois fronteira inexplorada — e o BFS devolve a direção do primeiro trecho,
+   que vira uma micro-ação: girar (L2/R2) ou andar (↑).
 
-### `level_up`
-Percepção das opções (até 3) → estrategista escolhe → navega → X.
+O minimapa muda de zoom entre fases, então nada assume tamanho de célula: a busca
+é em espaço de pixels e só a direção é usada.
 
-### `chest` / `boss_chest`
-Detecta tipo (carta / bônus / evolução / vazio). Vazio: aperta □ (cancel/sacar). Cartas: escolhe uma, X. Bônus abre `chest_card_target`. Evolução pede 2 cartas em sequência.
+**Ícones** (`vision/icons.py`) saem de template matching contra sprites reais.
+Prioridade segundo `jogo.md`: limpar os inimigos menores fortalece o personagem
+pro chefe. Bônus não vale desvio — só se estiver no caminho.
 
-### `chest_card_target`
-Prompt dedicado em `src/prompts/chest_card_target.txt` (separado do baú principal porque as duas telas têm estruturas diferentes — ver ADR-021). Percepção do deck mostrado + cursor visível → estrategista escolhe carta-alvo → navega delta passos → X. O delta usa `data["indice_selecionada"]` quando disponível.
+Inspecionar com:
 
-### `stage_complete`
-Anda pra frente (D-pad ↑) — passa pela pá, próxima fase.
+```bash
+python -m src.vision.debug frames/algum.png
+```
 
-### `game_complete`
-Aperta X pra voltar ao menu. Encerra a run com vitória.
+### `level_up`, `chest`, `boss_chest`, `chest_card_target`
 
-### `title` / `menu` / `game_over`
-Ações fixas (X / □ / abortar).
+VLM lê as opções, estrategista escolhe, o índice é preso ao intervalo válido e o
+executor navega até ele. Baú vazio: □ para sacar dinheiro.
 
-## Convenção de prompts
-Cada estado tem prompt em `src/prompts/{estado}.txt`. Schemas em `src/schemas.py`.
+### `stage_complete` / `game_complete` / `title` / `menu` / `game_over`
+
+Ações fixas (↑ / X / □ / abortar).
+
+## Telas sem handler
+
+O jogo tem telas que nenhum dos 12 estados cobre — as duas confirmações que a
+evolução de carta abre são o caso conhecido. `src/stall.py` é a rede genérica:
+se a tela não muda por 2 passos, escalona X → □ → andar pra frente; esgotado,
+aborta a run em vez de girar em falso.
+
+Isso não substitui handler correto. Quando houver frame real da tela, escreva o
+handler — a rede existe pra que a ausência dele não termine a run.
+
+## Verificação
+
+O conjunto de regressão vem de `python -m src.label`: você joga marcando o estado
+real de cada tela, e a ferramenta grava junto o que a CV respondeu. `--summary`
+mostra a taxa de concordância por estado.
