@@ -1,0 +1,15 @@
+A imagem mostra uma tela de ESCOLHA do jogo Vampire Crawlers (painel central com opções).
+Já sabemos que é uma tela de escolha. Diga QUAL delas.
+
+Opções (escolha EXATAMENTE UMA):
+- "level_up": título "Subiu de nível!" e "Escolha uma recompensa". Aparece após vencer inimigos.
+- "chest": recompensa de baú comum — cartas, bônus, evolução, ou aviso de que só há dinheiro.
+- "boss_chest": mesma UI de baú, mas aberto logo após derrotar um CHEFE.
+- "chest_card_target": pergunta em QUAL carta do seu deck aplicar um bônus. Mostra cartas que você já tem, não recompensas novas.
+- "shop": cartas com PREÇO EM OURO ao lado.
+
+Dica decisiva: se o texto fala em subir de nível, é "level_up". Se pede pra escolher
+uma carta do SEU deck pra receber algo, é "chest_card_target".
+
+Schema (responda APENAS com este JSON):
+{"estado": "level_up" | "chest" | "boss_chest" | "chest_card_target" | "shop"}

@@ -11,7 +11,8 @@ import mss
 from loguru import logger
 from PIL import Image
 
-from src.config import PATHS, WINDOW
+from src.config import PATHS
+from src.window import find_game_window
 
 _FILENAME_TS = "%Y%m%dT%H%M%S%f"
 
@@ -21,9 +22,15 @@ def _timestamp() -> str:
 
 
 def grab(state: str | None = None) -> Path:
-    """Captura a janela configurada e salva como PNG em frames/. Retorna o caminho."""
+    """Captura a área de cliente do jogo e salva como PNG em frames/.
+
+    A região vem do Win32 a cada chamada, não de coordenadas fixas: capturar um
+    retângulo calculado deixava o frame deslocado quando a janela tinha barra de
+    título ou era movida, e todo recorte de UI saía do lugar junto.
+    """
     PATHS.frames.mkdir(parents=True, exist_ok=True)
-    region = {"left": WINDOW.x, "top": WINDOW.y, "width": WINDOW.w, "height": WINDOW.h}
+    rect = find_game_window().rect
+    region = {"left": rect.x, "top": rect.y, "width": rect.w, "height": rect.h}
 
     with mss.mss() as sct:
         shot = sct.grab(region)

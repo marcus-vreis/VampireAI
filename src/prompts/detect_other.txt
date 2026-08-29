@@ -1,0 +1,12 @@
+A imagem mostra uma tela do jogo Vampire Crawlers que NÃO é combate, mapa nem tela de escolha.
+Diga qual é.
+
+Opções (escolha EXATAMENTE UMA):
+- "title": tela inicial com o logo "Vampire Crawlers".
+- "menu": menu principal ou pausa — abas, opções, inventário.
+- "game_over": tela de derrota / fim de run.
+- "stage_complete": fim de fase — pá no chão à frente e ícone de próxima fase.
+- "game_complete": tela final de "PARABÉNS", jogo concluído.
+
+Schema (responda APENAS com este JSON):
+{"estado": "title" | "menu" | "game_over" | "stage_complete" | "game_complete"}

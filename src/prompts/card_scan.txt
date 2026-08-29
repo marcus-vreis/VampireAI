@@ -4,7 +4,7 @@ Transcreva a carta literalmente. Não corrija ortografia.
 
 Campos:
 - "nome": nome literal da carta.
-- "mana": custo numérico no canto superior direito da carta. null se ilegível ou ausente.
+- "mana": número dentro do círculo no canto superior ESQUERDO da carta. null se ilegível ou ausente.
 - "descricao": texto do efeito, transcrito literalmente. null se ilegível.
 - "tipo": classifique em uma destas: "ataque" | "tomo" | "armadura" | "utilitario" | "bonus" | "?".
   - "tomo" = carta vermelha que adiciona mana
