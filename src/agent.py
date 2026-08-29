@@ -12,8 +12,10 @@ recompensa pegar) e o código valida antes de executar.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import time
+from dataclasses import dataclass, field
 
 import cv2
 from loguru import logger
@@ -154,8 +156,53 @@ def _decide_combat(scan: HandScan, memory: Memory | None) -> CombatAction | None
             "Jogada ilegal (tentativa {}/{}): {}",
             attempt + 1, _MAX_ILLEGAL_RETRIES + 1, verdict.reason,
         )
+        _RUN.jogadas_ilegais += 1
         complaint = verdict.reason
     return None
+
+
+@dataclass
+class RunSummary:
+    """O que aconteceu na run. Impresso ao final, seja qual for o motivo da saída.
+
+    Existe porque uma run terminava em silêncio: o log tinha tudo, mas ler
+    centenas de linhas pra saber se o agente jogou alguma carta é o tipo de
+    atrito que faz ninguém olhar.
+    """
+
+    inicio: float = field(default_factory=time.monotonic)
+    passos: int = 0
+    estados: collections.Counter = field(default_factory=collections.Counter)
+    cartas_jogadas: list[str] = field(default_factory=list)
+    escolhas: list[str] = field(default_factory=list)
+    turnos_encerrados: int = 0
+    jogadas_ilegais: int = 0
+    destravamentos: int = 0
+
+    def render(self) -> str:
+        minutos = (time.monotonic() - self.inicio) / 60
+        linhas = [
+            "",
+            "─" * 58,
+            f"RESUMO DA RUN — {minutos:.1f} min, {self.passos} passos",
+            f"  telas visitadas:     {dict(self.estados) or '(nenhuma)'}",
+            f"  cartas jogadas:      {len(self.cartas_jogadas)}",
+            f"  turnos encerrados:   {self.turnos_encerrados}",
+            f"  recompensas pegas:   {len(self.escolhas)}",
+            f"  jogadas ilegais:     {self.jogadas_ilegais}"
+            f"{'  <- o modelo erra a mana' if self.jogadas_ilegais else ''}",
+            f"  destravamentos:      {self.destravamentos}"
+            f"{'  <- telas sem handler' if self.destravamentos else ''}",
+        ]
+        if self.cartas_jogadas:
+            linhas.append(f"  últimas cartas:      {', '.join(self.cartas_jogadas[-6:])}")
+        if self.escolhas:
+            linhas.append(f"  recompensas:         {', '.join(self.escolhas[-4:])}")
+        linhas.append("─" * 58)
+        return "\n".join(linhas)
+
+
+_RUN = RunSummary()
 
 
 def forget_hand() -> None:
@@ -185,6 +232,7 @@ def handle_combat(memory: Memory | None = None) -> None:
     _HAND = scan
     if not scan.cards:
         logger.info("Sem cartas legíveis na mão — finalizando turno")
+        _RUN.turnos_encerrados += 1
         input_exec.end_turn()
         forget_hand()
         return
@@ -194,6 +242,7 @@ def handle_combat(memory: Memory | None = None) -> None:
         target = fallback_index(scan.cards, scan.mana)
         if target is None:
             logger.info("Nada jogável com {} de mana — finalizando turno", scan.mana)
+            _RUN.turnos_encerrados += 1
             input_exec.end_turn()
             forget_hand()
             return
@@ -201,6 +250,7 @@ def handle_combat(memory: Memory | None = None) -> None:
         motivo = "regra de reserva: custo crescente"
     elif action.acao == "finalizar_turno":
         logger.info("Finalizando turno: {}", action.motivo)
+        _RUN.turnos_encerrados += 1
         input_exec.end_turn()
         _remember(memory, f"combate: finalizar turno ({action.motivo})", "combat")
         forget_hand()
@@ -226,6 +276,7 @@ def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) 
     card = scan.cards[target]
     if seek_card(target, scan.cards, default_carddb()):
         _remember(memory, f"combate: jogou {card.nome} — {motivo}", "combat")
+        _RUN.cartas_jogadas.append(card.nome)
         input_exec.confirm()
         _HAND = scan.model_copy(
             update={"cards": scan.cards[:target] + scan.cards[target + 1 :]}
@@ -319,6 +370,7 @@ def _choose_and_confirm(
         logger.warning("Índice {} fora de 0..{} — usando {}", choice.indice_alvo, len(opcoes) - 1, target)
     logger.info("{}: escolhe idx={} ({})", contexto, target, choice.motivo)
     _remember(memory, f"{contexto}: idx={target} ({choice.motivo})", contexto)
+    _RUN.escolhas.append(f"{contexto}: {opcoes[target].get('nome', f'idx {target}')}")
     input_exec.select_and_confirm(target - cur)
 
 
@@ -442,6 +494,7 @@ def _try_unstick(detector: StallDetector, memory: Memory) -> bool:  # noqa: ARG0
     if nudge is None:
         return not detector.exhausted
     logger.warning("Tela não muda há {} passos — tentando {}", detector.patience, nudge.value)
+    _RUN.destravamentos += 1
     _NUDGE_ACTION[nudge]()
     return True
 
@@ -478,6 +531,8 @@ def _step(
     if perceived.state is not last_state:
         memory.append(f"transição → {perceived.state.value}", state=perceived.state.value)
         forget_hand()  # a mão só vale dentro do mesmo combate
+    _RUN.passos += 1
+    _RUN.estados[perceived.state.value] += 1
     handler = _HANDLERS.get(perceived.state)
     if handler is None:
         logger.warning("Sem handler para {}", perceived.state)
@@ -532,6 +587,7 @@ def loop(max_iters: int | None = None) -> int:
         return 0
     finally:
         gamepad.reset()
+        print(_RUN.render())
 
 
 def _summarize_via_vlm(body: str) -> str:

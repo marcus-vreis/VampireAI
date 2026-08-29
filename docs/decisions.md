@@ -959,3 +959,22 @@ produziria a mesma falha silenciosa, e sem aviso nenhum.
 variável de `frames/` — media coisa diferente a cada execução, e as asserções
 eram limiares frouxos ("mais de 100 frames"). Agora roda sobre um conjunto curado
 e as asserções são exatas. A suíte inteira ficou **2.5x mais rápida** (26s → 10s).
+
+## ADR-069: Resumo impresso ao final da run (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `loop` imprime um resumo no `finally` — passos, telas visitadas,
+cartas jogadas, recompensas pegas, jogadas ilegais e destravamentos.
+**Motivo:** uma run terminava **em silêncio**. Toda a informação estava no log,
+mas ler centenas de linhas pra saber se o agente chegou a jogar uma carta é o
+tipo de atrito que faz ninguém olhar — e a primeira run de verdade ainda não
+aconteceu.
+**No `finally`, de propósito:** uma run que aborta é justamente quando mais se
+quer saber o que houve antes.
+**Duas linhas são diagnóstico, não estatística:**
+- **jogadas ilegais** > 0 significa que o modelo erra a aritmética de mana. É a
+  mesma medida do bench (ADR-032), agora colhida em jogo real.
+- **destravamentos** > 0 significa tela que nenhum handler cobre. Cada um aponta
+  pra um estado que falta mapear, e o número diz quanto tempo se perdeu ali.
+
+Ambas trazem a explicação junto quando são diferentes de zero, pra não exigir que
+quem lê saiba interpretar.
