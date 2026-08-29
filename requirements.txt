@@ -1,14 +1,5 @@
-mss>=9.0
-vgamepad>=0.1.0
-openai>=1.50
-pillow>=10.0
-numpy>=1.26
-opencv-python-headless>=4.9
-pytesseract>=0.3.13
-pydantic>=2.5
-python-dotenv>=1.0
-loguru>=0.7
-
-# dev
-pytest>=8.0
-ruff>=0.5
+# As dependências são declaradas em pyproject.toml — fonte única, pra não
+# divergirem. Este arquivo existe porque o README documenta
+# `pip install -r requirements.txt`, e mantê-lo funcionando é mais barato que
+# reeducar quem clona o repo.
+-e .[dev]

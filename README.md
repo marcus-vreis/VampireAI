@@ -77,10 +77,13 @@ ollama serve   # deixar rodando
 
 # 2. Projeto
 git clone <repo>
-cd vampire-ai
+cd vampire-ai        # os comandos abaixo precisam rodar DAQUI
 python -m venv .venv && source .venv/bin/activate   # Linux/macOS
 # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+# As dependências são declaradas em pyproject.toml; requirements.txt aponta pra
+# lá, então não há duas listas pra manter em sincronia.
+# O agente é uma aplicação, roda com `python -m src.agent` de dentro do projeto.
 
 # 3. Tesseract (para OCR auxiliar — opcional mas recomendado)
 # Linux: sudo apt install tesseract-ocr tesseract-ocr-por
