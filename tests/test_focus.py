@@ -1,0 +1,54 @@
+"""Pré-condição de foco antes de agir."""
+
+from __future__ import annotations
+
+from unittest import mock
+
+import pytest
+
+from src import agent, gamepad
+from src.states import GameNotFocusedError
+
+
+@pytest.fixture(autouse=True)
+def sem_dry_run():
+    anterior = gamepad.is_dry_run()
+    gamepad.set_dry_run(False)
+    yield
+    gamepad.set_dry_run(anterior)
+
+
+def janela(foreground: bool):
+    return mock.Mock(foreground=foreground)
+
+
+def test_recusa_agir_com_o_jogo_atras_de_outra_janela():
+    """mss captura uma REGIÃO DA TELA. Já aconteceu de a página da Steam estar
+    por cima, ser capturada, passar por combate, e os números de tempo de jogo
+    dela virarem leituras de mana de 24 e 8."""
+    with (
+        mock.patch.object(agent, "find_game_window", return_value=janela(False)),
+        pytest.raises(GameNotFocusedError, match="primeiro plano"),
+    ):
+        agent._require_focus()
+
+
+def test_prossegue_com_o_jogo_em_primeiro_plano():
+    with mock.patch.object(agent, "find_game_window", return_value=janela(True)):
+        agent._require_focus()
+
+
+def test_dry_run_dispensa_a_checagem():
+    """No replay os frames vêm de arquivo e nenhum input é emitido — o que está
+    na tela agora é irrelevante."""
+    gamepad.set_dry_run(True)
+    with mock.patch.object(agent, "find_game_window") as procura:
+        agent._require_focus()
+    assert procura.call_count == 0
+
+
+def test_o_erro_de_foco_e_um_caso_de_nao_e_o_jogo():
+    """O loop já trata NotTheGameError como fatal; foco herda esse tratamento."""
+    from src.states import NotTheGameError
+
+    assert issubclass(GameNotFocusedError, NotTheGameError)

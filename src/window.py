@@ -24,6 +24,7 @@ _TITLE_SUBSTRING = "Vampire Crawlers"
 class WindowLookup:
     rect: WindowRect
     source: str  # "win32" | "config"
+    foreground: bool = True
 
 
 def _user32():
@@ -62,15 +63,25 @@ def _client_rect_on_screen(u32, hwnd: int) -> WindowRect:
 
 
 def find_game_window(title_substring: str = _TITLE_SUBSTRING) -> WindowLookup:
-    """Client area da janela do jogo. Cai no retângulo de config se não achar."""
+    """Client area da janela do jogo. Cai no retângulo de config se não achar.
+
+    `foreground` diz se a janela está em primeiro plano. Importa por dois motivos
+    que se reforçam: `mss` captura uma REGIÃO DA TELA, não o conteúdo da janela,
+    então qualquer coisa por cima do jogo entra no frame — já aconteceu de a
+    página da Steam ser capturada e passar por combate. E o gamepad virtual só
+    chega na janela focada, então agir sem foco seria inútil de qualquer jeito.
+    """
     try:
         u32 = _user32()
         needle = title_substring.casefold()
+        active = u32.GetForegroundWindow()
         for hwnd, title in _iter_top_level(u32):
             if needle in title.casefold():
                 rect = _client_rect_on_screen(u32, hwnd)
                 if rect.w > 0 and rect.h > 0:
-                    return WindowLookup(rect=rect, source="win32")
+                    return WindowLookup(
+                        rect=rect, source="win32", foreground=hwnd == active
+                    )
         logger.warning("Janela '{}' não encontrada — usando retângulo de config", title_substring)
     except (RuntimeError, OSError) as e:
         logger.warning("Lookup de janela falhou ({}) — usando retângulo de config", e)
@@ -90,7 +101,15 @@ def main() -> int:
 
     found = find_game_window(args.title)
     r = found.rect
-    print(f"source={found.source} x={r.x} y={r.y} w={r.w} h={r.h}")
+    print(
+        f"source={found.source} x={r.x} y={r.y} w={r.w} h={r.h} "
+        f"primeiro_plano={'sim' if found.foreground else 'NAO'}"
+    )
+    if not found.foreground:
+        print(
+            "  aviso: a janela do jogo não está em primeiro plano. A captura "
+            "pega o que estiver por cima, e o gamepad não chega nela."
+        )
     return 0
 
 

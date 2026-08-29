@@ -44,6 +44,16 @@ class NotTheGameError(RuntimeError):
     """A captura não pegou a janela do jogo — não há estado a inferir."""
 
 
+class GameNotFocusedError(NotTheGameError):
+    """O jogo existe mas está atrás de outra janela.
+
+    Separado porque tem conserto óbvio (clicar no jogo) e porque a captura nesse
+    caso mostra outro programa — inferir estado dali produz lixo com cara de
+    resposta. Já aconteceu: a página da Steam foi capturada e passou por combate,
+    e os números de tempo de jogo dela viraram leituras de mana de 24 e 8.
+    """
+
+
 _DIALOG_STATES = {
     GameState.LEVEL_UP,
     GameState.CHEST,

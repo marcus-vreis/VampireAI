@@ -87,6 +87,7 @@ def test_transicao_de_estado_esquece_a_mao(mao):
         mock.patch.object(agent, "perceive") as perceive,
         mock.patch.object(agent, "cv2"),
         mock.patch.object(agent, "_HANDLERS", {}),
+        mock.patch.object(agent, "_require_focus"),
     ):
         perceive.return_value = mock.Mock(state=agent.GameState.MAP)
         detector = mock.Mock(stuck=False)

@@ -628,3 +628,26 @@ certa é a conhecida.
 "Pardal", "Tophello" por "Tuphello"). Isso é inofensivo — a identidade só precisa
 ser consistente pra `seek_card` funcionar, e o hash do `CardDB` não depende do
 texto.
+
+## ADR-052: Agir exige o jogo em primeiro plano (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent._require_focus` verifica `GetForegroundWindow` antes de cada
+passo e levanta `GameNotFocusedError` (subclasse de `NotTheGameError`, já tratada
+como fatal pelo loop). Dispensado quando o gamepad está em dry-run — no replay os
+frames vêm de arquivo.
+**Motivo — observado ao vivo:** durante uma sessão de observação, a mana saiu
+`None, None, 24, 4, 8, 3, 3...`. Vinte e quatro de mana não existe no jogo.
+Capturando e inspecionando o recorte do coração, apareceu texto da **loja da
+Steam**: "TEMPO DE JOGO / nas duas semanas: 4,8 h / Total: 39,3 h". Os "24" e "8"
+eram os números de tempo de jogo da Steam sendo lidos como mana.
+**A causa não era o `find_game_window`:** ele achou a janela certa (uma só com
+esse título, 1280x720 na posição correta). A causa é mais fundamental — **`mss`
+captura uma REGIÃO DA TELA, não o conteúdo da janela**. Qualquer coisa por cima do
+jogo entra no frame, e a assinatura de CV pode confundir isso com um estado real:
+neste caso a página da Steam passou por `combat`.
+**Por que foco é a checagem certa, e não uma assinatura mais rígida:** o gamepad
+virtual só chega na janela focada. Agir sem foco seria inútil mesmo que a captura
+estivesse correta. A pré-condição já era necessária; ela só não estava escrita.
+**Limitação conhecida:** foco não garante ausência de sobreposição (um overlay
+sempre-no-topo continua entrando). O `NOT_GAME` da ADR-022 segue como segunda
+linha.

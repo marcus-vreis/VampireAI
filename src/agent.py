@@ -36,8 +36,9 @@ from src.perception import (
 )
 from src.schemas import ChoiceAction, CombatAction
 from src.stall import Nudge, StallDetector
-from src.states import GameState, NotTheGameError
+from src.states import GameNotFocusedError, GameState, NotTheGameError
 from src.vision.minimap import Turn, read_minimap
+from src.window import find_game_window
 
 # Mão conhecida, reaproveitada entre jogadas do mesmo turno. Refazer a travessia
 # a cada carta jogada custava ~2.5s numa mão de 6 e não acrescentava informação:
@@ -407,9 +408,27 @@ def _try_unstick(detector: StallDetector, memory: Memory) -> bool:
     return True
 
 
+def _require_focus() -> None:
+    """A janela do jogo precisa estar em primeiro plano pra agir.
+
+    Dois motivos que se reforçam: `mss` captura uma REGIÃO DA TELA, então o que
+    estiver por cima do jogo entra no frame — já aconteceu de a página da Steam
+    ser capturada, passar por combate, e os números de tempo de jogo dela virarem
+    leituras de mana de 24 e 8. E o gamepad virtual só chega na janela focada.
+    """
+    if gamepad.is_dry_run():
+        return  # replay: os frames vêm de arquivo, não da tela
+    if not find_game_window().foreground:
+        raise GameNotFocusedError(
+            "a janela do Vampire Crawlers não está em primeiro plano. A captura "
+            "pega o que estiver por cima dela, e o gamepad não chega nela."
+        )
+
+
 def _step(
     memory: Memory, last_state: GameState | None, detector: StallDetector
 ) -> GameState | None:
+    _require_focus()
     frame_path = str(grab(state="loop"))
     detector.observe(cv2.imread(frame_path))
     if detector.stuck:
