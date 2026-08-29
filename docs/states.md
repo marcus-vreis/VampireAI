@@ -51,6 +51,7 @@ VLM inventava um estado para eles.
 | `menu` | abas Unlocks / Settings / Crawlers | CV → VLM (subgrupo outros) |
 | `game_over` | tela de derrota | CV → VLM (subgrupo outros) |
 | `deck` | tela "Baralho", o deck inteiro | CV: painel ardósia intermediário |
+| `notice` | painel de aviso: só texto e um botão | CV → VLM (subgrupo diálogo) |
 
 ## Tratamento por estado
 
@@ -108,8 +109,11 @@ Ações fixas (↑ / X / □ / abortar).
 
 ## Telas sem handler
 
-O jogo tem telas que nenhum dos 12 estados cobre — as duas confirmações que a
-evolução de carta abre são o caso conhecido. `src/stall.py` é a rede genérica:
+O estado `notice` cobre painéis que são só texto e um botão — inclusive as duas
+confirmações que a evolução de carta abre, e o "Nenhum controle detectado". O
+handler aperta X.
+
+Ainda assim, `src/stall.py` continua como rede genérica para o que escapar:
 se a tela não muda por 2 passos, escalona X → □ → andar pra frente; esgotado,
 aborta a run em vez de girar em falso.
 

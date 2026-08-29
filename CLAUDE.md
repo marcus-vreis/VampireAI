@@ -118,6 +118,9 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
 - Tela desconhecida não pode matar a run: o antitravamento (`src/stall.py`) é a
   rede genérica. Handler específico é melhor, mas só quando houver frame real
 - Prompts ao VLM exigem transcrição literal, sem correção ortográfica
+- **Toda lista fechada de opções num prompt precisa de saída.** Sem ela, "não sei"
+  vira resposta errada com cara de certeza: `detect_dialog` sem a opção `notice`
+  respondia "level_up" para um painel de aviso
 
 ## Jogo
 Vampire Crawlers, deckbuilder turn-based. UI em **português**, jogado com

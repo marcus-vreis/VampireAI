@@ -37,6 +37,7 @@ class GameState(str, Enum):
     MENU = "menu"
     GAME_OVER = "game_over"
     DECK = "deck"  # tela "Baralho": o deck inteiro, aberto pelo jogador
+    NOTICE = "notice"  # painel de aviso/confirmação: só texto e um botão
 
 
 class NotTheGameError(RuntimeError):
@@ -49,6 +50,7 @@ _DIALOG_STATES = {
     GameState.BOSS_CHEST,
     GameState.CHEST_CARD_TARGET,
     GameState.SHOP,
+    GameState.NOTICE,
 }
 _OTHER_STATES = {
     GameState.TITLE,

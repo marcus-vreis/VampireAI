@@ -327,6 +327,18 @@ def handle_game_complete(memory: Memory | None = None) -> None:
     input_exec.confirm()
 
 
+def handle_notice(memory: Memory | None = None) -> None:  # noqa: ARG001
+    """Fecha um painel de aviso apertando X.
+
+    Cobre telas que não são escolha nenhuma: "Nenhum controle detectado", e as
+    duas confirmações que `jogo.md` descreve depois de escolher a evolução de
+    carta. Sem este estado o prompt de diálogo era forçado a chutar uma das cinco
+    telas de recompensa, e o agente tentava escolher onde não havia opção.
+    """
+    logger.info("Painel de aviso — confirmando")
+    input_exec.confirm()
+
+
 def handle_deck(memory: Memory | None = None) -> None:  # noqa: ARG001
     """Fecha a tela "Baralho".
 
@@ -367,6 +379,7 @@ _HANDLERS = {
     GameState.MENU: handle_menu,
     GameState.GAME_OVER: handle_game_over,
     GameState.DECK: handle_deck,
+    GameState.NOTICE: handle_notice,
     GameState.SHOP: handle_menu,  # placeholder
 }
 

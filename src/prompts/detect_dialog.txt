@@ -1,5 +1,5 @@
-A imagem mostra uma tela de ESCOLHA do jogo Vampire Crawlers (painel central com opções).
-Já sabemos que é uma tela de escolha. Diga QUAL delas.
+A imagem mostra um PAINEL sobreposto do jogo Vampire Crawlers.
+Já sabemos que é um painel. Diga QUAL deles.
 
 Opções (escolha EXATAMENTE UMA):
 - "level_up": título "Subiu de nível!" e "Escolha uma recompensa". Aparece após vencer inimigos.
@@ -7,9 +7,14 @@ Opções (escolha EXATAMENTE UMA):
 - "boss_chest": mesma UI de baú, mas aberto logo após derrotar um CHEFE.
 - "chest_card_target": pergunta em QUAL carta do seu deck aplicar um bônus. Mostra cartas que você já tem, não recompensas novas.
 - "shop": cartas com PREÇO EM OURO ao lado.
+- "notice": AVISO ou CONFIRMAÇÃO simples. Só texto e um botão (tipo "Ok" ou "Continuar"), SEM cartas nem recompensas pra escolher.
 
-Dica decisiva: se o texto fala em subir de nível, é "level_up". Se pede pra escolher
-uma carta do SEU deck pra receber algo, é "chest_card_target".
+Dicas decisivas:
+- Se o texto fala em subir de nível, é "level_up".
+- Se pede pra escolher uma carta do SEU deck pra receber algo, é "chest_card_target".
+- Se NÃO há nenhuma carta ou recompensa pra escolher, é "notice". Não force uma
+  das outras opções: painéis de aviso existem e responder errado faz o agente
+  tentar escolher recompensa onde não há nenhuma.
 
 Schema (responda APENAS com este JSON):
-{"estado": "level_up" | "chest" | "boss_chest" | "chest_card_target" | "shop"}
+{"estado": "level_up" | "chest" | "boss_chest" | "chest_card_target" | "shop" | "notice"}

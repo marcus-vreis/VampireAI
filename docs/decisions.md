@@ -524,3 +524,23 @@ independentemente da causa.
 `Gatti Amari` mana=1, `Phiera Der Tuthello` mana=3, `Faca` mana=0. Comparado com
 o cache poluído de antes (`Pughnala`, `Bastardato`, vários `mana: None`), confirma
 que a correção do recorte (ADR-022) e do canto do custo no prompt surtiram efeito.
+
+## ADR-046: Estado `notice` — saída de emergência no prompt de diálogo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `detect_dialog.txt` ganha a opção `"notice"`, para painéis que são só
+texto e um botão. Handler aperta X.
+**Motivo, medido:** testando o prompt contra os 12 frames de diálogo que existem
+— algo que nunca tinha sido feito, porque o replay com modelo só rodou agora — ele
+respondeu **"level_up" para todos os 12**, inclusive pro painel "Nenhum controle
+detectado". O prompt oferecia cinco telas de recompensa e nenhuma saída, então
+qualquer painel não mapeado era forçado a virar uma delas. O agente então tentava
+escolher recompensa numa tela sem opção nenhuma.
+**Resultado:** com a opção adicionada, **12/12 corretos** — os 11 de level up
+continuam certos e o aviso sai como `notice`.
+**Fecha parte de uma lacuna dada como bloqueada:** `jogo.md` descreve que a
+evolução de carta abre *"uma tela, aperta X, aparece outra, aperte X novamente"*.
+São exatamente painéis de aviso. Eu tinha registrado que isso precisaria de frames
+reais; não precisava — precisava de uma opção honesta no prompt.
+**Princípio geral:** prompt de múltipla escolha sem escape transforma "não sei" em
+resposta errada com cara de certeza. Toda lista fechada de opções que vai pro
+modelo merece uma saída.
