@@ -84,3 +84,27 @@ def test_carta_com_mana_invalida_nao_e_jogavel_por_engano():
     assert mao[0].mana is None
     assert validate(0, mao, 0) is None, "mana desconhecida não bloqueia"
     assert affordable(mao, 0) == [0]
+
+
+def test_regra_prefere_custo_conhecido_a_ilegivel():
+    """Escolher uma carta de custo ilegível é apostar: se o custo real não couber,
+    o jogo recusa a jogada em silêncio e o turno trava."""
+    mao = [card("Ilegível", None), card("Otto", 2)]
+    assert fallback_index(mao, 3) == 1
+
+
+def test_tomo_conhecido_vence_ilegivel_mais_barato():
+    mao = [card("Ilegível", None), card("Otto", 2), card("Tomo", 0, "tomo")]
+    assert fallback_index(mao, 3) == 2
+
+
+def test_ilegivel_e_usada_quando_nao_ha_alternativa():
+    assert fallback_index([card("Ilegível", None)], 3) == 0
+
+
+def test_prompt_de_combate_avisa_sobre_custo_desconhecido():
+    from src.config import PATHS
+
+    prompt = (PATHS.prompts / "combat_decide.txt").read_text(encoding="utf-8")
+    assert "null" in prompt
+    assert "custo conhecido" in prompt

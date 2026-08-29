@@ -231,7 +231,7 @@ def scan_combat_hand(
         if any(abs(selected.x - p) < _SAME_CARD_PX for p in positions):
             break  # voltou a uma carta já lida: a mão inteira foi vista
         positions.append(selected.x)
-        cards.append(read_card(_crop_card(frame, selected), db))
+        cards.append(_read_with_retry(_crop_card(frame, selected), db))
         logger.info("scan {}: {} (mana={})", len(cards), cards[-1].nome, cards[-1].mana)
         frame, selected = _tap_and_wait(final_x)
 
@@ -318,6 +318,17 @@ def read_choices(frame: np.ndarray, db: CardDB | None = None) -> dict | None:
     return {"opcoes": opcoes, "indice_selecionada": slots.selected_idx}
 
 
+def _read_with_retry(crop: np.ndarray, db: CardDB | None) -> CardScanFrame:
+    """Lê uma carta, repetindo uma vez se o custo sair ilegível.
+
+    Custo desconhecido enfraquece a validação da jogada: `combat.validate` não
+    consegue provar que a carta é cara demais, então ela passa. Uma segunda
+    leitura é barata e recupera boa parte dos casos.
+    """
+    card = read_card(crop, db)
+    return card if card.mana is not None else read_card(crop, db)
+
+
 def _read_choice_card(
     frame: np.ndarray, circle: CostCircle, side: int, db: CardDB | None
 ) -> CardScanFrame:
@@ -330,10 +341,7 @@ def _read_choice_card(
     """
     x, y, w, h = card_bbox(circle, side)
     crop = frame[max(0, y) : y + h, max(0, x) : x + w]
-    card = read_card(crop, db)
-    if card.mana is None:
-        card = read_card(crop, db)
-    return card
+    return _read_with_retry(crop, db)
 
 
 _PROMPT_BY_STATE: dict[GameState, tuple[str, type[BaseModel]]] = {

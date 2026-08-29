@@ -606,3 +606,25 @@ opções eram title / menu / game_over / stage_complete / game_complete, e
 `game_over` **mata uma run que estava indo bem**.
 **Assimetria deliberada no prompt:** errar pro lado de `notice` custa um X apertado
 à toa; errar pro lado de `game_over` custa a partida. O prompt diz isso.
+
+## ADR-051: Custo ilegível é escolha de último recurso (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `fallback_index` só escolhe carta com `mana=None` quando não há
+alternativa. A leitura de carta repete uma vez quando o custo sai ilegível, e o
+prompt de combate avisa explicitamente sobre `"mana": null`.
+**Motivo — achado rodando a cadeia completa pela primeira vez:** montei uma mão a
+partir de frames reais (CV → recorte → leitura → prompt → decisão → validação) e
+o modelo produziu 3 jogadas legais em 3, com raciocínio coerente. Mas uma das
+cartas veio com `mana=None`, e numa das execuções o modelo escolheu justamente
+ela.
+**Por que isso é perigoso:** `validate` não bloqueia custo desconhecido — não dá
+pra provar que a carta é cara demais. Ali sobrava mana e deu certo; com mana
+apertada o jogo recusaria a jogada **em silêncio** e o turno travaria, sem nada no
+log dizendo o porquê.
+**Assimetria:** não bloquear é certo (não sabemos que é ilegal), mas *escolher* de
+propósito é apostar. Entre uma carta que sabemos jogável e uma que não sabemos, a
+certa é a conhecida.
+**Não resolve o ruído do modelo:** nomes ainda saem com erro ("Pardan" por
+"Pardal", "Tophello" por "Tuphello"). Isso é inofensivo — a identidade só precisa
+ser consistente pra `seek_card` funcionar, e o hash do `CardDB` não depende do
+texto.

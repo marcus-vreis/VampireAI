@@ -53,10 +53,17 @@ def fallback_index(hand: list[CardScanFrame], mana: int | None) -> int | None:
     `jogo.md`: jogar em ordem CRESCENTE de custo buffa as cartas seguintes, e
     tomos (vermelhos, custo baixo) devolvem mana. Então: tomo mais barato
     primeiro; sem tomo jogável, a carta jogável mais barata.
+
+    Carta de custo ILEGÍVEL fica por último. `validate` não a bloqueia — não dá
+    pra provar que é ilegal — mas escolher uma de propósito é apostar: se o custo
+    real não couber, o jogo recusa a jogada em silêncio e o turno trava. Entre
+    uma carta que sabemos jogável e uma que não sabemos, a certa é a conhecida.
     """
     playable = affordable(hand, mana)
     if not playable:
         return None
-    tomes = [i for i in playable if hand[i].tipo == "tomo"]
-    pool = tomes or playable
+    known = [i for i in playable if hand[i].mana is not None]
+    pool = known or playable
+    tomes = [i for i in pool if hand[i].tipo == "tomo"]
+    pool = tomes or pool
     return min(pool, key=lambda i: (hand[i].mana if hand[i].mana is not None else 99, i))
