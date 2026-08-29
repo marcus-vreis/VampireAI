@@ -1043,3 +1043,24 @@ quando uma terminou normal e a outra abortou por três falhas seguidas.
 
 Lida assim: a terceira run foi 3.6x mais longa, jogou 9x mais cartas, e não
 precisou de nenhum destravamento nem produziu jogada ilegal.
+
+## ADR-074: Observação sem foco é dado inválido, não só inseguro (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `label --watch` pula a amostra quando o jogo não está em primeiro
+plano, e reporta quantas pulou.
+**Motivo — erro de raciocínio meu, exposto ao vivo:** ao pôr o aviso de foco nas
+CLIs (ADR-066), deixei o `--watch` de fora com o argumento de que ele "só observa,
+não emite input". O argumento estava errado: sem foco a observação não fica
+insegura, fica **inválida**.
+**O que aconteceu de fato:** uma sessão de 30 amostras com o jogo atrás de outra
+janela reportou `not_game`, `unknown`, e **mana de 104, 12 e 9** — lendo números
+de qualquer coisa que estivesse por cima. E como o `--watch` usa o caminho híbrido
+de leitura, **ensinou esses algarismos ao livro de glifos**.
+**O portão de dois votos conteve o estrago** (ADR-033): entraram `8` e `9` com um
+voto cada, e nenhum será servido. Foi bom vê-lo funcionar sob ataque real, mas
+proteção não é licença pra alimentar dado ruim de propósito.
+**O agente já estava protegido**: `_require_focus` roda antes de qualquer captura
+no loop (ADR-052). O buraco era só na ferramenta de observação.
+**Padrão que se repete:** três vezes nesta sessão uma precondição correta faltou
+em um dos lugares que precisava dela — o replay, as CLIs, e agora o watch. Escrever
+a regra num lugar não a aplica nos outros.

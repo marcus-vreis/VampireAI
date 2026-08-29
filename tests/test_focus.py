@@ -96,3 +96,24 @@ def test_tirar_o_foco_congela_o_agente():
     ):
         agent._require_focus()
     assert chamadas == [], "nem chega a capturar, quanto mais a agir"
+
+
+def test_observacao_pula_amostra_sem_foco(capsys):
+    """Observar não precisa de foco por SEGURANÇA, mas precisa por VALIDADE.
+
+    Uma sessão sem foco reportou mana de 104 e 12 lendo números de outra janela —
+    e ensinou esses algarismos ao livro de glifos. O portão de dois votos conteve
+    o estrago, mas dado ruim não deve entrar de propósito.
+    """
+    from src import label
+
+    with (
+        mock.patch.object(label, "find_game_window", return_value=janela(False)),
+        mock.patch.object(label, "grab") as capturou,
+        mock.patch.object(label.time, "sleep"),
+    ):
+        label.watch(interval_s=0, samples=3)
+    assert capturou.call_count == 0, "nem chega a capturar"
+    saida = capsys.readouterr().out
+    assert "sem foco" in saida
+    assert "3 de 3 amostras puladas" in saida

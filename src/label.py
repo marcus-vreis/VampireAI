@@ -30,6 +30,7 @@ from src.vision.cards import detect_card_slots
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
 from src.vision.screen import signature
+from src.window import find_game_window
 
 DATASET_DIR = PROJECT_ROOT / "dataset"
 LABELS_FILE = DATASET_DIR / "labels.jsonl"
@@ -150,10 +151,24 @@ def watch(interval_s: float, samples: int) -> int:
 
     Usa o caminho híbrido de leitura de mana, então também aquece o livro de
     glifos: depois de ver cada algarismo duas vezes, a leitura passa a ser local.
+
+    **Pula a amostra quando o jogo não está em primeiro plano.** Observar não
+    precisa de foco por segurança, mas precisa por validade: `mss` captura uma
+    região da tela, então sem foco cada leitura é do que estiver por cima. Uma
+    sessão assim reportou mana de 104 e 12 lendo números de outra janela — e
+    pior, ENSINOU esses algarismos ao livro de glifos. O portão de dois votos
+    conteve o estrago, mas dado ruim não deve entrar de propósito.
     """
     print(f"Observando a cada {interval_s}s por {samples} amostras. Jogue normalmente.\n")
     print(f"{'#':>3} {'estado':10} {'cartas':>6} {'cursor':>6} {'mana':>5} {'HP':>7}  minimapa")
+    fora_de_foco = 0
     for i in range(1, samples + 1):
+        if not find_game_window().foreground:
+            fora_de_foco += 1
+            print(f"{i:>3} {'(sem foco)':10} — traga a janela do jogo pra frente")
+            if i < samples:
+                time.sleep(interval_s)
+            continue
         shot = grab(state="watch")
         frame = cv2.imread(str(shot))
         sig = signature(frame)
@@ -173,6 +188,11 @@ def watch(interval_s: float, samples: int) -> int:
         )
         if i < samples:
             time.sleep(interval_s)
+    if fora_de_foco:
+        print(
+            f"\n{fora_de_foco} de {samples} amostras puladas por falta de foco. "
+            "Sem o jogo em primeiro plano, a captura pega o que estiver por cima."
+        )
     return 0
 
 
