@@ -78,6 +78,7 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
 - `python -m src.label --summary` — concordância CV × rótulo por estado
 - `python -m src.bench --models a,b` — compara modelos na decisão (consome GPU)
 - `python -m src.agent` — loop completo (consome GPU; **pedir confirmação**)
+- `python -m src.agent --historico` — compara as runs anteriores
 - `pytest -q` — roda testes
 - `ruff check . && ruff format .` — lint + format
 

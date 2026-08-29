@@ -16,6 +16,7 @@ import collections
 import json
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import cv2
 from loguru import logger
@@ -47,6 +48,8 @@ from src.window import find_game_window
 # jogar uma carta só a remove da mão. Fica em nível de módulo porque os handlers
 # recebem apenas `memory`; `forget_hand` zera em toda transição de estado.
 _HAND: HandScan | None = None
+
+RUNS_LOG = PATHS.logs / "runs.jsonl"
 
 _MAX_PARSE_FAILS = 3
 _LOOP_SLEEP_S = 0.4
@@ -184,12 +187,38 @@ class RunSummary:
     jogadas_ilegais: int = 0
     destravamentos: int = 0
 
+    def as_record(self, motivo: str) -> dict:
+        return {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "minutos": round((time.monotonic() - self.inicio) / 60, 1),
+            "motivo": motivo,
+            "passos": self.passos,
+            "estados": dict(self.estados),
+            "cartas_jogadas": len(self.cartas_jogadas),
+            "turnos_encerrados": self.turnos_encerrados,
+            "recompensas": len(self.escolhas),
+            "jogadas_ilegais": self.jogadas_ilegais,
+            "destravamentos": self.destravamentos,
+        }
+
+    def persist(self, motivo: str) -> None:
+        """Guarda a run em `logs/runs.jsonl`, uma linha por run.
+
+        O resumo impresso some no scrollback. Comparar duas runs é o sinal de
+        progresso do projeto — "20 cartas jogadas contra 6" diz mais que qualquer
+        teste sobre o agente estar melhorando.
+        """
+        RUNS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with RUNS_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(self.as_record(motivo), ensure_ascii=False) + "\n")
+
     def render(self) -> str:
         minutos = (time.monotonic() - self.inicio) / 60
         linhas = [
             "",
             "─" * 58,
             f"RESUMO DA RUN — {minutos:.1f} min, {self.passos} passos",
+            f"  registrado em:       {RUNS_LOG}",
             f"  telas visitadas:     {dict(self.estados) or '(nenhuma)'}",
             f"  cartas jogadas:      {len(self.cartas_jogadas)}",
             f"  turnos encerrados:   {self.turnos_encerrados}",
@@ -591,6 +620,7 @@ def loop(max_iters: int | None = None) -> int:
     parse_fails = 0
     focus_waits = 0
     iters = 0
+    motivo = "limite de iterações"
     last_state: GameState | None = None
     detector = StallDetector()
     try:
@@ -603,21 +633,25 @@ def loop(max_iters: int | None = None) -> int:
                 focus_waits += 1
                 if focus_waits >= _MAX_FOCUS_WAITS:
                     logger.error("{} — desistindo após {} tentativas", e, focus_waits)
+                    motivo = "jogo nunca voltou ao foco"
                     return 2
                 logger.warning("Jogo sem foco ({}) — aguardando", focus_waits)
                 time.sleep(_FOCUS_WAIT_S)
                 continue
             except NotTheGameError as e:
                 logger.error("{}", e)
+                motivo = "captura não era o jogo"
                 return 2
             except ModelUnavailableError as e:
                 # Insistir não adianta: o servidor responde e o modelo não roda.
                 logger.error("{}", e)
+                motivo = "modelo indisponível"
                 return 3
             except KeyboardInterrupt:
                 # Sair por Ctrl+C é uso normal, não falha. O `finally` solta o
                 # gamepad e imprime o resumo, que é o que interessa.
                 logger.info("Interrompido pelo usuário")
+                motivo = "interrompido (Ctrl+C)"
                 return 0
             except (ValueError, RuntimeError) as e:
                 parse_fails += 1
@@ -625,12 +659,14 @@ def loop(max_iters: int | None = None) -> int:
                 memory.append(f"falha de percepção: {e}", state="error")
                 if parse_fails >= _MAX_PARSE_FAILS:
                     logger.error("3 falhas seguidas — abortando")
+                    motivo = "três falhas seguidas"
                     return 1
             time.sleep(_LOOP_SLEEP_S)
         logger.info("Limite de iterações atingido")
         return 0
     finally:
         gamepad.reset()
+        _RUN.persist(motivo)
         print(_RUN.render())
 
 
@@ -645,6 +681,27 @@ def _summarize_via_vlm(body: str) -> str:
     return result if isinstance(result, str) else str(result)
 
 
+def historico() -> int:
+    """Tabela das runs anteriores. É o sinal de progresso do projeto.
+
+    "20 cartas jogadas contra 6" diz mais sobre o agente estar melhorando que
+    qualquer teste — e some no scrollback se não for guardado.
+    """
+    if not RUNS_LOG.is_file():
+        print(f"Nenhuma run registrada ainda. Rode o agente; o resumo vai pra {RUNS_LOG}.")
+        return 1
+    linhas = [json.loads(x) for x in RUNS_LOG.read_text(encoding="utf-8").splitlines() if x]
+    print(f"{'quando':17} {'min':>5} {'passos':>7} {'cartas':>7} {'recomp':>7} {'ilegais':>8} {'destrav':>8}  motivo")
+    print("-" * 90)
+    for r in linhas[-20:]:
+        print(
+            f"{r['ts'][:16]:17} {r['minutos']:>5.1f} {r['passos']:>7} "
+            f"{r['cartas_jogadas']:>7} {r['recompensas']:>7} "
+            f"{r['jogadas_ilegais']:>8} {r['destravamentos']:>8}  {r['motivo']}"
+        )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Loop principal do agente.")
     parser.add_argument("--iters", type=int, default=None, help="Máximo de iterações")
@@ -653,8 +710,13 @@ def main() -> int:
         action="store_true",
         help="Confirma execução real (consome GPU pesado)",
     )
+    parser.add_argument(
+        "--historico", action="store_true", help="Mostra as runs anteriores e sai."
+    )
     args = parser.parse_args()
 
+    if args.historico:
+        return historico()
     if not args.confirm:
         logger.error("Use --confirm pra rodar (consome GPU pesado).")
         return 2

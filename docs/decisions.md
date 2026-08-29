@@ -1022,3 +1022,24 @@ não remover sem pôr outra coisa no lugar.
 justamente quando mais se quer ver o resumo do que aconteceu. Antes o traceback
 subia até o topo; o `finally` rodava, mas a saída ficava suja e o código de saída,
 errado.
+
+## ADR-073: Runs registradas em `logs/runs.jsonl` (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o resumo da run também é gravado, uma linha por run, com o **motivo
+da saída**. `python -m src.agent --historico` mostra a tabela.
+**Motivo:** o resumo impresso (ADR-069) some no scrollback. Comparar duas runs é
+o sinal de progresso do projeto inteiro — "18 cartas jogadas contra 2" diz mais
+sobre o agente estar melhorando que qualquer teste da suíte, porque mede o que o
+projeto quer (jogar) e não o que o código faz.
+**O motivo da saída é o campo mais informativo:** distingue "rodou até o limite"
+de "morreu na primeira tela". Sem ele, duas runs de 24 passos parecem iguais
+quando uma terminou normal e a outra abortou por três falhas seguidas.
+**Exemplo do que a tabela mostra:**
+
+    quando              min  passos  cartas  recomp  ilegais  destrav  motivo
+    2026-08-29T23:21    2.0      24       2       1        3        2  três falhas seguidas
+    2026-08-29T23:21    4.0      61       9       2        1        1  interrompido (Ctrl+C)
+    2026-08-29T23:21    6.0      87      18       3        0        0  limite de iterações
+
+Lida assim: a terceira run foi 3.6x mais longa, jogou 9x mais cartas, e não
+precisou de nenhum destravamento nem produziu jogada ilegal.

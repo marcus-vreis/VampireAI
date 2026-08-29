@@ -85,3 +85,48 @@ def test_ctrl_c_sai_limpo_com_resumo(capsys):
         assert agent.loop(max_iters=5) == 0
     assert "RESUMO DA RUN" in capsys.readouterr().out
     assert pad.reset.call_count == 1, "o gamepad tem que ser solto"
+
+
+def test_persiste_a_run_com_o_motivo_da_saida(tmp_path, resumo_limpo):
+    """Comparar duas runs é o sinal de progresso do projeto — e some no
+    scrollback se não for guardado."""
+    import json
+
+    destino = tmp_path / "runs.jsonl"
+    resumo_limpo.passos = 12
+    resumo_limpo.cartas_jogadas = ["Otto", "Faca"]
+    with mock.patch.object(agent, "RUNS_LOG", destino):
+        resumo_limpo.persist("limite de iterações")
+    registro = json.loads(destino.read_text(encoding="utf-8").strip())
+    assert registro["passos"] == 12
+    assert registro["cartas_jogadas"] == 2
+    assert registro["motivo"] == "limite de iterações"
+
+
+def test_cada_run_vira_uma_linha(tmp_path, resumo_limpo):
+    destino = tmp_path / "runs.jsonl"
+    with mock.patch.object(agent, "RUNS_LOG", destino):
+        resumo_limpo.persist("a")
+        resumo_limpo.persist("b")
+    assert len(destino.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_registra_o_motivo_de_uma_run_abortada(tmp_path):
+    """O motivo da saída é o que distingue "rodou até o fim" de "morreu na
+    primeira tela"."""
+    import json
+
+    destino = tmp_path / "runs.jsonl"
+    with (
+        mock.patch.object(agent, "RUNS_LOG", destino),
+        mock.patch.object(agent, "_RUN", agent.RunSummary()),
+        mock.patch.object(agent.time, "sleep"),
+        mock.patch.object(agent, "gamepad"),
+        mock.patch.object(agent, "preflight", return_value=True),
+        mock.patch.object(agent, "default_memory", return_value=mock.MagicMock()),
+        mock.patch.object(agent, "_step", side_effect=NotTheGameError("x")),
+    ):
+        agent.loop(max_iters=3)
+    assert json.loads(destino.read_text(encoding="utf-8").strip())["motivo"] == (
+        "captura não era o jogo"
+    )
