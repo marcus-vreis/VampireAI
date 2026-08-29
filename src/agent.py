@@ -59,6 +59,10 @@ _DECISION_RELEVANT = ("combat", "level_up", "chest", "boss_chest", "stage_comple
 # nada sobre O QUE decidir: "transição → combat" não ajuda a escolher carta.
 _NO_SIGNAL = "transição →"
 _MAX_ILLEGAL_RETRIES = 2
+# Perder o foco é transitório: você alterna janela, uma notificação rouba o foco.
+# Abortar a run por isso seria desproporcional — esperamos o jogo voltar.
+_MAX_FOCUS_WAITS = 30
+_FOCUS_WAIT_S = 2.0
 
 
 def _memory_block(memory: Memory | None) -> str:
@@ -491,6 +495,7 @@ def loop(max_iters: int | None = None) -> int:
     memory.append("agente iniciado", state="boot")
 
     parse_fails = 0
+    focus_waits = 0
     iters = 0
     last_state: GameState | None = None
     detector = StallDetector()
@@ -499,7 +504,15 @@ def loop(max_iters: int | None = None) -> int:
             iters += 1
             try:
                 last_state = _step(memory, last_state, detector)
-                parse_fails = 0
+                parse_fails = focus_waits = 0
+            except GameNotFocusedError as e:
+                focus_waits += 1
+                if focus_waits >= _MAX_FOCUS_WAITS:
+                    logger.error("{} — desistindo após {} tentativas", e, focus_waits)
+                    return 2
+                logger.warning("Jogo sem foco ({}) — aguardando", focus_waits)
+                time.sleep(_FOCUS_WAIT_S)
+                continue
             except NotTheGameError as e:
                 logger.error("{}", e)
                 return 2

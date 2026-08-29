@@ -846,3 +846,26 @@ exercitados, nem com mock**. O primeiro teste que escrevi já encontrou a ADR-06
 **Sinal:** quando escrever o primeiro teste de um caminho acha bug na primeira
 leitura, o caminho estava sendo mantido por suposição. Os que faltam agora são
 `handle_stage_complete` e `handle_game_complete`, ambos de uma linha.
+
+## ADR-063: Perder o foco espera, não aborta (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `GameNotFocusedError` é tratada antes de `NotTheGameError` no loop:
+aguarda 2s e tenta de novo, até 30 vezes (~1 minuto). Só então desiste.
+**Motivo:** `GameNotFocusedError` herda de `NotTheGameError` (ADR-052), e o loop
+tratava a base como fatal — **alternar de janela por um segundo matava a run**.
+Perder foco é transitório e recuperável; "a captura mostra outro programa" não é.
+Estavam no mesmo balde porque o parentesco entre as exceções foi escolhido pela
+semântica ("não é o jogo") sem olhar o tratamento.
+**Assimetria de custo:** esperar por engano custa alguns segundos; abortar por
+engano custa a run inteira. O limite de ~1 minuto evita o outro extremo, de
+esperar pra sempre por um jogo que foi fechado.
+
+## ADR-064: O loop principal ganha teste (2026-08-29)
+**Decisão:** `tests/test_loop.py` cobre limite de iterações, os três códigos de
+saída, o contador de falhas consecutivas e a liberação do gamepad no `finally`.
+**Motivo:** era o controle externo que decide se uma run sobrevive a um problema,
+e nunca tinha sido exercitado. Ler o código pra escrever o teste foi o que
+expôs a ADR-063.
+**Coberto:** que o contador de falhas **zera a cada passo bem-sucedido** (uma
+falha isolada não pode somar com outra dez minutos depois), e que
+`gamepad.reset()` roda mesmo quando o loop aborta.
