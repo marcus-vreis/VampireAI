@@ -440,13 +440,38 @@ escolhida, conferindo a identidade pelo `CardDB` a cada passo. Substitui
 conferir onde o cursor tinha parado**. Com o índice errado por qualquer razão
 (contagem, oclusão, carta comprada no meio do turno), ele jogava a carta errada em
 silêncio. Não havia nenhuma verificação entre decidir e executar.
-**Efeito colateral de desempenho:** dispensa refazer a travessia inteira depois de
-cada jogada. A distância média até o alvo é ~1/3 da mão, então o custo por jogada
-cai de uma travessia completa (~2.5s numa mão de 6) para ~0.9s. Turno de 6 cartas
-jogando 4: de ~20s para ~13s, dentro da meta de 15s.
+**Efeito de desempenho:** o custo de posicionar cai de uma travessia completa
+(~2.5s numa mão de 6) para ~0.9s, porque a distância média até o alvo é ~1/3 da
+mão. Isso **habilita** dispensar a travessia entre jogadas, mas não a dispensa
+sozinho — quem faz isso é a ADR-043.
+
+> **Correção (2026-08-29):** a versão original desta ADR e a mensagem de commit
+> que a acompanhou afirmavam que a travessia entre jogadas já estava dispensada.
+> Não estava: `handle_combat` continuava chamando `scan_combat_hand` a cada
+> entrada. O ganho descrito era projetado, não medido no código entregue.
+> Implementado em seguida na ADR-043.
 **Cartas de mesmo nome são intercambiáveis:** se a mão tem dois "Tomo Vazio",
 jogar qualquer um dá no mesmo, então parar no primeiro que casar é correto — e
 resolve de graça a ambiguidade que uma busca por índice teria.
 **Falha com segurança:** se a carta destacada não estiver no cache, ou não
 pertencer à mão conhecida, devolve False sem apertar X, e o próximo passo do loop
 refaz a travessia. Melhor não jogar do que jogar errado.
+
+## ADR-043: Mão reaproveitada entre jogadas do mesmo turno (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent._HAND` guarda a mão conhecida. Nas entradas seguintes em
+combate, só mana e HP são relidos (~95ms); a lista de cartas vem do cache, menos
+a que foi jogada. Zerado em toda transição de estado e sempre que o
+posicionamento falha.
+**Motivo:** jogar uma carta só a remove da mão — refazer a travessia inteira
+depois disso custava ~2.5s numa mão de 6 e não acrescentava informação nenhuma.
+**Por que é seguro:** `seek_card` (ADR-042) confere a identidade da carta antes de
+confirmar. Se a mão mudou de um jeito que não prevemos — carta comprada no meio
+do turno, por exemplo — ele não encontra a carta esperada, devolve False, o cache
+é esquecido e o passo seguinte refaz a travessia. O cache degrada pra travessia,
+nunca pra jogada errada.
+**Efeito:** turno de 6 cartas jogando 4 passa de ~20s para ~13s, dentro da meta
+de 15s. Combinado com a ADR-041 (espera adaptativa), o turno saiu de ~22s.
+**Nota de estilo:** estado mutável em nível de módulo é feio, mas os handlers
+recebem apenas `memory` e mudar essa assinatura por causa de um só handler seria
+pior. `forget_hand()` torna o ciclo de vida explícito e testável.

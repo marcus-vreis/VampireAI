@@ -30,6 +30,7 @@ from src.perception import (
     default_carddb,
     default_glyphbook,
     perceive,
+    read_hud,
     scan_combat_hand,
     seek_card,
 )
@@ -37,6 +38,12 @@ from src.schemas import ChoiceAction, CombatAction
 from src.stall import Nudge, StallDetector
 from src.states import GameState, NotTheGameError
 from src.vision.minimap import Turn, read_minimap
+
+# Mão conhecida, reaproveitada entre jogadas do mesmo turno. Refazer a travessia
+# a cada carta jogada custava ~2.5s numa mão de 6 e não acrescentava informação:
+# jogar uma carta só a remove da mão. Fica em nível de módulo porque os handlers
+# recebem apenas `memory`; `forget_hand` zera em toda transição de estado.
+_HAND: HandScan | None = None
 
 _MAX_PARSE_FAILS = 3
 _LOOP_SLEEP_S = 0.4
@@ -124,12 +131,35 @@ def _decide_combat(scan: HandScan, memory: Memory | None) -> CombatAction | None
     return None
 
 
+def forget_hand() -> None:
+    """Esquece a mão conhecida. Chamar em toda transição de estado."""
+    global _HAND
+    _HAND = None
+
+
+def _current_hand() -> HandScan:
+    """Mão conhecida com mana e HP atualizados, ou travessia se não houver.
+
+    Reaproveitar é seguro porque `seek_card` confere a identidade da carta antes
+    de confirmar: se a mão mudou de um jeito que não prevemos (carta comprada no
+    meio do turno), ele falha e o passo seguinte refaz a travessia.
+    """
+    book = default_glyphbook()
+    if _HAND is None:
+        return scan_combat_hand(default_carddb(), book)
+    mana, hp = read_hud(book)
+    return _HAND.model_copy(update={"mana": mana, "hp": hp})
+
+
 def handle_combat(memory: Memory | None = None) -> None:
-    """Percorre a mão, decide UMA jogada, valida e executa."""
-    scan = scan_combat_hand(default_carddb(), default_glyphbook())
+    """Percorre a mão (ou reusa a conhecida), decide UMA jogada, valida e executa."""
+    global _HAND
+    scan = _current_hand()
+    _HAND = scan
     if not scan.cards:
         logger.info("Sem cartas legíveis na mão — finalizando turno")
         input_exec.end_turn()
+        forget_hand()
         return
 
     action = _decide_combat(scan, memory)
@@ -138,6 +168,7 @@ def handle_combat(memory: Memory | None = None) -> None:
         if target is None:
             logger.info("Nada jogável com {} de mana — finalizando turno", scan.mana)
             input_exec.end_turn()
+            forget_hand()
             return
         logger.info("Modelo não achou jogada legal — regra de custo crescente: idx={}", target)
         motivo = "regra de reserva: custo crescente"
@@ -145,6 +176,7 @@ def handle_combat(memory: Memory | None = None) -> None:
         logger.info("Finalizando turno: {}", action.motivo)
         input_exec.end_turn()
         _remember(memory, f"combate: finalizar turno ({action.motivo})", "combat")
+        forget_hand()
         return
     else:
         target = action.indice_alvo
@@ -163,16 +195,21 @@ def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) 
     onde o cursor tinha parado — com o índice errado, jogava a carta errada em
     silêncio. Agora ele anda até VER a carta escolhida em destaque.
     """
+    global _HAND
     card = scan.cards[target]
     if seek_card(target, scan.cards, default_carddb()):
         _remember(memory, f"combate: jogou {card.nome} — {motivo}", "combat")
         input_exec.confirm()
+        _HAND = scan.model_copy(
+            update={"cards": scan.cards[:target] + scan.cards[target + 1 :]}
+        )
         return
     logger.warning(
         "Não consegui posicionar o cursor em '{}' — refazendo a leitura da mão",
         card.nome,
     )
     _remember(memory, f"combate: cursor não chegou em {card.nome}", "combat")
+    forget_hand()
 
 
 def _remember(memory: Memory | None, event: str, state: str) -> None:
@@ -370,6 +407,7 @@ def _step(
     perceived = perceive(frame_path)
     if perceived.state is not last_state:
         memory.append(f"transição → {perceived.state.value}", state=perceived.state.value)
+        forget_hand()  # a mão só vale dentro do mesmo combate
     handler = _HANDLERS.get(perceived.state)
     if handler is None:
         logger.warning("Sem handler para {}", perceived.state)

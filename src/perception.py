@@ -237,6 +237,12 @@ def scan_combat_hand(
     )
 
 
+def read_hud(book: GlyphBook | None = None) -> tuple[int | None, tuple[int, int] | None]:
+    """Captura e lê só mana e HP. ~95ms, contra ~2.5s de uma travessia."""
+    frame = cv2.imread(str(grab(state="hud")))
+    return read_mana_hybrid(frame, book), read_hp_hybrid(frame, book)
+
+
 def _identify(frame: np.ndarray, circle: CostCircle, db: CardDB | None) -> str | None:
     """Nome da carta destacada pelo cache. None se ela não é conhecida."""
     if db is None:
