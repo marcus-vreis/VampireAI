@@ -366,3 +366,40 @@ amostras na sessão de rotulagem.
 **Vale o registro do método:** este estado era invisível nos 118 frames salvos.
 Observar o jogo rodando, mesmo sem o agente no controle, encontrou em 20 amostras
 o que nenhuma análise offline encontraria.
+
+## ADR-038: Limiar de texto do HUD adaptativo, não fixo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `hud.text_mask` calcula o limiar por Otsu sobre o canal de brilho
+(restrito a pixels de baixa saturação), mais uma margem de 55% da distância até o
+topo. Substitui o corte absoluto em `V > 185`.
+**Motivo:** o jogo **escurece o HUD inteiro** quando um painel está aberto. Com o
+corte fixo, o coração passava de 4 dígitos detectados para **zero** — descoberto
+comparando o frame da tela "Baralho" com um frame normal. Otsu acha a separação
+natural entre texto e fundo em qualquer iluminação.
+**Por que a margem acima de Otsu:** sozinho, ele deixa o limiar baixo o bastante
+pro "6" do coração grudar na barra de fração e falhar nos filtros de forma. Faixa
+segura medida (4 casos, duas iluminações): 0.45 a 0.60. Escolhido 0.55.
+**Efeito colateral bom:** o "4" do orbe, que produzia 2 chaves distintas de glifo
+entre frames, passou a produzir **uma só** em 24 amostras ao vivo.
+
+## ADR-039: Glifo por vizinho mais próximo (2026-08-29)
+**Decisão:** `GlyphBook.lookup` procura o glifo conhecido mais parecido dentro de
+72 bits, em vez de exigir chave idêntica.
+**Motivo:** o mesmo algarismo não produz sempre o mesmo mapa de bits. Os dígitos
+do coração medem 17px e são AMPLIADOS até a normalização 12x18, o que introduz
+ruído de quantização.
+**Limiar medido** sobre 216 bits: o mesmo dígito varia até 57 (o "6" é o pior
+caso); dígitos diferentes ficam a 92 no mínimo. 72 fica no meio, com ~1.27x de
+folga pros dois lados.
+
+## ADR-040: Caminho que ensina os algarismos do coração (2026-08-29)
+**Decisão:** `perception.read_hp_hybrid` — livro de glifos, caindo pro modelo e
+ensinando o que ele responder. Simétrico ao que a mana já tinha.
+**Motivo:** o HP **nunca era lido**. `read_hp` só consultava o livro, e nada
+ensinava os dígitos do coração, então o dado que a ADR-036 injeta no prompt de
+combate ficava sempre ausente — o recurso estava morto na prática.
+**Como apareceu:** observando o jogo ao vivo. Vinte amostras mostraram `HP=None`
+em todas, enquanto a mana era lida corretamente. O teste unitário não pegava
+porque ele mesmo ensinava o livro antes de ler.
+**Verificado ao vivo:** depois da correção, HP=(61, 61) em todas as 6 amostras
+seguintes, com o modelo chamado uma vez só.

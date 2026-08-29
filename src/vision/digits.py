@@ -31,6 +31,12 @@ _NORM_W, _NORM_H = 12, 18
 # Duas observações concordantes antes de confiar. Uma leitura errada do modelo
 # envenenaria o glifo permanentemente.
 _MIN_VOTES = 2
+# Busca por vizinho mais próximo, não igualdade de chave. O mesmo algarismo não
+# produz sempre o mesmo mapa de bits: os dígitos do coração medem 17px e são
+# AMPLIADOS até 12x18, o que introduz ruído de quantização. Medido sobre 216
+# bits: mesmo dígito varia até 57; dígitos diferentes ficam a 92 no mínimo.
+# 72 fica no meio, com ~1.27x de folga pros dois lados.
+_MAX_GLYPH_DISTANCE = 72
 
 _MIN_AREA = 60
 _MIN_HEIGHT = 14
@@ -46,6 +52,14 @@ class Glyph:
     x: int  # ordena algarismos dentro de um número
     y: int  # separa linhas: o coração empilha HP atual sobre HP máximo
     h: int  # altura do algarismo, referência pro corte entre linhas
+
+
+def _hamming(a: str, b: str) -> int:
+    if len(a) != len(b):
+        return 10**6
+    xa = np.frombuffer(bytes.fromhex(a), dtype=np.uint8)
+    xb = np.frombuffer(bytes.fromhex(b), dtype=np.uint8)
+    return int(np.unpackbits(xa ^ xb).sum())
 
 
 def _normalize(patch: np.ndarray) -> str:
@@ -98,11 +112,20 @@ class GlyphBook:
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def lookup(self, key: str) -> int | None:
-        votes = self._votes.get(key)
+        votes = self._votes.get(key) or self._nearest(key)
         if not votes:
             return None
         digit, count = votes.most_common(1)[0]
         return int(digit) if count >= _MIN_VOTES else None
+
+    def _nearest(self, key: str) -> Counter[str] | None:
+        """Glifo conhecido mais parecido, se estiver dentro da tolerância."""
+        best, best_distance = None, _MAX_GLYPH_DISTANCE + 1
+        for known, votes in self._votes.items():
+            distance = _hamming(key, known)
+            if distance < best_distance:
+                best, best_distance = votes, distance
+        return best
 
     def observe(self, key: str, digit: int) -> None:
         self._votes.setdefault(key, Counter())[str(digit)] += 1

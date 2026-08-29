@@ -31,7 +31,7 @@ from src.schemas import CardScanFrame, ChestState, LevelUpState, ShopState
 from src.states import GameState, detect_state
 from src.vision.cards import CostCircle, card_bbox, detect_card_slots
 from src.vision.digits import GlyphBook
-from src.vision.hud import ORB_BOX, orb_glyphs, read_hp, read_mana
+from src.vision.hud import HEART_BOX, ORB_BOX, heart_rows, orb_glyphs, read_hp, read_mana
 
 # Duas leituras do cursor a menos de 12px são a mesma carta.
 _SAME_CARD_PX = 12
@@ -94,6 +94,11 @@ class _ManaResult(BaseModel):
     mana: int | None = None
 
 
+class _HpResult(BaseModel):
+    hp: int | None = None
+    hp_max: int | None = None
+
+
 def read_mana_hybrid(frame: np.ndarray, book: GlyphBook | None = None) -> int | None:
     """Mana pelo caminho mais barato disponível.
 
@@ -122,6 +127,42 @@ def read_mana_hybrid(frame: np.ndarray, book: GlyphBook | None = None) -> int | 
     if value is not None and book is not None:
         book.teach(orb_glyphs(frame), value)
     return value
+
+
+def read_hp_hybrid(
+    frame: np.ndarray, book: GlyphBook | None = None
+) -> tuple[int, int] | None:
+    """HP pelo livro de glifos, caindo pro modelo e ensinando o que ele responder.
+
+    Sem este caminho o HP nunca era lido: `read_hp` só consulta o livro, e nada
+    ensinava os algarismos do coração — então o dado que a ADR-036 coloca no
+    prompt de combate ficava sempre ausente.
+    """
+    known = read_hp(frame, book)
+    if known is not None:
+        return known
+
+    rows = heart_rows(frame)
+    x0, y0, x1, y1 = HEART_BOX
+    heart = frame[y0:y1, x0:x1]
+    if len(rows) != 2 or heart.size == 0:
+        return None
+    pil = Image.fromarray(cv2.cvtColor(heart, cv2.COLOR_BGR2RGB))
+    try:
+        result = ask_vlm(
+            None, _load_prompt("read_hp_heart.txt"), schema=_HpResult, image=pil
+        )
+    except RuntimeError as e:
+        logger.warning("Leitura de HP falhou: {}", e)
+        return None
+    assert isinstance(result, dict)
+    current, maximum = result.get("hp"), result.get("hp_max")
+    if current is None or maximum is None:
+        return None
+    if book is not None:
+        book.teach(rows[0], current)
+        book.teach(rows[1], maximum)
+    return current, maximum
 
 
 def _order_by_position(positions: list[int], final_x: int) -> tuple[list[int], int]:
@@ -153,7 +194,7 @@ def scan_combat_hand(
         if mana is None:
             mana = read_mana_hybrid(frame, book)
         if hp is None:
-            hp = read_hp(frame, book)
+            hp = read_hp_hybrid(frame, book)
         selected = detect_card_slots(frame).selected
         if selected is None:
             logger.info("Sem carta destacada no passo {} — fim da travessia", step)

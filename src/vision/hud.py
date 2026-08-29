@@ -18,16 +18,33 @@ ORB_BOX = (1015, 455, 1145, 585)
 HEART_BOX = (140, 450, 275, 580)
 _UPSCALE = 4
 
-# O algarismo é branco; o modificador "-1" no canto do orbe é amarelo saturado,
-# e os números do coração são brancos sobre vermelho. Exigir saturação baixa e
-# brilho alto isola o texto nos dois casos.
-_TEXT_LO, _TEXT_HI = np.array([0, 0, 185]), np.array([180, 90, 255])
+# O algarismo é acinzentado/branco; o modificador "-1" no canto do orbe é amarelo
+# saturado, e os números do coração são claros sobre vermelho. Saturação baixa
+# elimina os dois fundos.
+_MAX_SATURATION = 90
+# Margem acima do limiar de Otsu, em fração da distância até o topo do brilho.
+# Otsu sozinho deixava o "6" do coração grudar na barra de fração. Faixa segura
+# medida (4 casos, duas iluminações): 0.45 a 0.60. 0.55 fica no meio.
+_OTSU_MARGIN = 0.55
+_BRIGHT_PERCENTILE = 99.5
 
 
 def text_mask(patch: np.ndarray) -> np.ndarray:
-    """Máscara binária do texto claro sobre o fundo colorido do HUD."""
+    """Máscara binária do texto claro sobre o fundo colorido do HUD.
+
+    O limiar é ADAPTATIVO, não fixo: o jogo escurece o HUD inteiro quando um
+    painel está aberto, e um corte absoluto em brilho perdia todos os dígitos do
+    coração nessa condição. Otsu acha a separação natural entre texto e fundo em
+    qualquer iluminação; a margem acima dele evita que o algarismo grude em
+    elementos vizinhos como a barra de fração.
+    """
     hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
-    return cv2.inRange(hsv, _TEXT_LO, _TEXT_HI)
+    value = hsv[..., 2].copy()
+    value[hsv[..., 1] >= _MAX_SATURATION] = 0  # só concorre o que é acinzentado
+    otsu, _ = cv2.threshold(value, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    top = float(np.percentile(value, _BRIGHT_PERCENTILE))
+    threshold = otsu + (top - otsu) * _OTSU_MARGIN
+    return ((value > threshold) * 255).astype(np.uint8)
 
 
 def orb_glyphs(frame: np.ndarray) -> list[Glyph]:
@@ -62,6 +79,15 @@ def read_mana(frame: np.ndarray, book: GlyphBook | None = None) -> int | None:
     return value
 
 
+def heart_rows(frame: np.ndarray) -> list[list[Glyph]]:
+    """Glifos do coração agrupados em linhas: HP atual em cima, máximo embaixo."""
+    x0, y0, x1, y1 = HEART_BOX
+    heart = frame[y0:y1, x0:x1]
+    if heart.size == 0:
+        return []
+    return group_rows(find_glyphs(text_mask(heart)))
+
+
 def read_hp(frame: np.ndarray, book: GlyphBook | None = None) -> tuple[int, int] | None:
     """(hp_atual, hp_max) lidos no coração, ou None se ilegível.
 
@@ -72,11 +98,7 @@ def read_hp(frame: np.ndarray, book: GlyphBook | None = None) -> tuple[int, int]
     """
     if book is None:
         return None
-    x0, y0, x1, y1 = HEART_BOX
-    heart = frame[y0:y1, x0:x1]
-    if heart.size == 0:
-        return None
-    rows = group_rows(find_glyphs(text_mask(heart)))
+    rows = heart_rows(frame)
     if len(rows) != 2:
         return None
     current, maximum = book.read(rows[0]), book.read(rows[1])

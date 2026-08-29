@@ -25,9 +25,8 @@ from loguru import logger
 
 from src.capture import grab
 from src.config import PROJECT_ROOT
-from src.perception import default_glyphbook, read_mana_hybrid
+from src.perception import default_glyphbook, read_hp_hybrid, read_mana_hybrid
 from src.vision.cards import detect_card_slots
-from src.vision.hud import read_hp
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
 from src.vision.screen import signature
@@ -161,7 +160,7 @@ def watch(interval_s: float, samples: int) -> int:
         slots = detect_card_slots(frame)
         book = default_glyphbook()
         mana = read_mana_hybrid(frame, book)
-        hp = read_hp(frame, book)
+        hp = read_hp_hybrid(frame, book)
         minimap = read_minimap(frame)
         mm = "-"
         if minimap is not None:

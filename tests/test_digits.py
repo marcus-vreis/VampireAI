@@ -92,3 +92,48 @@ def test_livro_persiste_entre_instancias(tmp_path):
     first.teach(glyphs, 4)
     first.teach(glyphs, 4)
     assert GlyphBook(path).read(glyphs) == 4
+
+
+DIM = "deck_baralho_referencia.png"  # HUD escurecido pelo painel aberto
+
+
+def test_le_o_coracao_com_hud_escurecido():
+    """O jogo escurece o HUD quando um painel abre.
+
+    Um limiar absoluto de brilho perdia todos os quatro dígitos nessa condição —
+    e era o que fazia o HP nunca ser lido.
+    """
+    from src.vision.digits import group_rows
+    from src.vision.hud import heart_rows
+
+    rows = heart_rows(load(DIM))
+    assert len(rows) == 2
+    assert [len(r) for r in rows] == [2, 2]
+    assert group_rows(rows[0] + rows[1]) == rows
+
+
+def test_orbe_sobrevive_ao_escurecimento():
+    assert len(orb_glyphs(load(DIM))) == 1
+
+
+def test_mesmo_digito_em_recortes_diferentes_e_reconhecido(book):
+    """O coração mede 17px e é AMPLIADO até 12x18, o que gera ruído de
+    quantização: o mesmo dígito não produz sempre o mesmo mapa de bits.
+    A busca é por vizinho mais próximo, não por igualdade de chave."""
+    normal = heart_glyphs(load())
+    escuro = heart_glyphs(load(DIM))
+    for glyph in normal:
+        book.teach([glyph], 6 if glyph.x < 60 else 1)
+        book.teach([glyph], 6 if glyph.x < 60 else 1)
+    for glyph in escuro:
+        esperado = 6 if glyph.x < 60 else 1
+        assert book.lookup(glyph.key) == esperado
+
+
+def test_digitos_diferentes_nao_se_confundem(book):
+    """Piso medido: dígitos distintos ficam a 92 bits no mínimo, o limiar é 72."""
+    seis = next(g for g in heart_glyphs(load()) if g.x < 60)
+    um = next(g for g in heart_glyphs(load()) if g.x >= 60)
+    book.teach([seis], 6)
+    book.teach([seis], 6)
+    assert book.lookup(um.key) is None
