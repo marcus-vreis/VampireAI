@@ -93,3 +93,60 @@ def test_mesma_posicao_direcoes_diferentes_apontam_pro_mesmo_lugar(frame, facing
     step = plan(minimap)
     assert step is not None
     assert step.turn is turn
+
+
+def sem_icones(monkeypatch):
+    import src.nav
+
+    monkeypatch.setattr(src.nav, "find_icons", lambda *a, **k: [])
+
+
+def test_cascata_de_prioridade_desce_ao_derrotar_alvos(monkeypatch):
+    """Simulação de fim de fase: apaga os ícones do minimapa e vê o plano descer.
+
+    Não há frame de fim de fase no repositório, mas o comportamento é testável
+    removendo os ícones do mapa real.
+    """
+    import dataclasses
+
+    import numpy as np
+
+    import src.nav
+    from src.vision.minimap import read_minimap
+
+    minimap = read_minimap(load(REFERENCE))
+    assert plan(minimap).reason == "inimigo mais próximo"
+
+    sem_icone = dataclasses.replace(minimap)
+    sem_icones(monkeypatch)
+    assert plan(sem_icone).reason == "explorar fronteira"
+
+    revelado = dataclasses.replace(minimap, fog=np.zeros_like(minimap.fog))
+    assert plan(revelado).reason == "procurar a saída da fase"
+
+
+def test_alvos_ficam_na_componente_do_jogador():
+    """O minimapa mostra salas ainda sem corredor aberto: 15 componentes conexas
+    no frame de referência. Alvo em outra é visível e inalcançável, e o BFS
+    gastava a busca inteira pra devolver None."""
+    from src.vision.minimap import direction_to, distant_floor, read_minimap
+
+    minimap = read_minimap(load(REFERENCE))
+    alvos = distant_floor(minimap)
+    assert alvos
+    assert all(direction_to(minimap, alvo) is not None for alvo in alvos)
+
+
+def test_fim_de_fase_nao_devolve_none(monkeypatch):
+    """Antes, `plan` devolvia None e o handler andava pra frente às cegas até o
+    antitravamento abortar — justamente quando havia uma fase pra avançar."""
+    import dataclasses
+
+    import numpy as np
+
+    from src.vision.minimap import read_minimap
+
+    sem_icones(monkeypatch)
+    minimap = read_minimap(load(REFERENCE))
+    fim = dataclasses.replace(minimap, fog=np.zeros_like(minimap.fog))
+    assert plan(fim) is not None

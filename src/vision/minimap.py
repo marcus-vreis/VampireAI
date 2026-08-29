@@ -244,6 +244,37 @@ def relative_turn(current: Facing, want: Facing) -> Turn:
     return [Turn.FORWARD, Turn.RIGHT, Turn.BACK, Turn.LEFT][diff]
 
 
+def reachable(mm: Minimap) -> np.ndarray:
+    """Piso ligado ao jogador. O minimapa mostra salas ainda sem corredor aberto.
+
+    Medido no frame de referência: o piso tem 15 componentes conexas, e a do
+    jogador é uma. Alvos nas outras são visíveis e inalcançáveis — o BFS gasta a
+    busca inteira e devolve None.
+    """
+    total, labels = cv2.connectedComponents(mm.walkable.astype(np.uint8), 4)
+    if total <= 1:
+        return mm.walkable
+    px, py = mm.player
+    return labels == labels[py, px]
+
+
+def distant_floor(mm: Minimap) -> list[tuple[int, int]]:
+    """Piso conhecido, do mais DISTANTE do jogador pro mais próximo.
+
+    Último recurso quando não há inimigo, chefe nem névoa: o mapa está revelado
+    mas a saída da fase ainda precisa ser alcançada. Andar pro ponto mais longe
+    move o agente por regiões que ele não percorreu, o que é estritamente melhor
+    que a alternativa anterior — andar pra frente às cegas até o antitravamento
+    abortar a run bem na hora de avançar de fase.
+    """
+    ys, xs = np.nonzero(reachable(mm))
+    if len(xs) == 0:
+        return []
+    px, py = mm.player
+    ordem = np.argsort(-((xs - px) ** 2 + (ys - py) ** 2))
+    return [(int(xs[i]), int(ys[i])) for i in ordem[::11][:32]]
+
+
 def frontier_targets(mm: Minimap) -> list[tuple[int, int]]:
     """Piso conhecido encostado na névoa, do mais próximo ao mais distante.
 
@@ -254,7 +285,7 @@ def frontier_targets(mm: Minimap) -> list[tuple[int, int]]:
     Sem classificar ícones ainda: explorar a fronteira já faz o agente percorrer
     a fase. Priorizar caveira/chefe entra quando houver dataset rotulado.
     """
-    walk = mm.walkable.astype(np.uint8)
+    walk = reachable(mm).astype(np.uint8)
     near_fog = cv2.dilate(mm.fog.astype(np.uint8), np.ones((5, 5), np.uint8))
     ys, xs = np.nonzero(walk & near_fog)
     if len(xs) == 0:

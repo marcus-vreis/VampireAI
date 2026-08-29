@@ -14,7 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.vision.icons import Icon, IconKind, find_icons
-from src.vision.minimap import Minimap, Turn, direction_to, frontier_targets
+from src.vision.minimap import (
+    Minimap,
+    Turn,
+    direction_to,
+    distant_floor,
+    frontier_targets,
+)
 
 
 @dataclass(frozen=True)
@@ -47,12 +53,17 @@ def plan(minimap: Minimap) -> Plan | None:
 
     O jogador só enxerga ícones em área já revelada, então explorar a fronteira
     continua sendo o plano de fundo — é o que faz novos alvos aparecerem.
+
+    O último degrau cobre o fim de fase: sem inimigo, sem chefe e sem névoa,
+    `plan` devolvia None e o handler andava pra frente às cegas até o
+    antitravamento abortar — justamente quando havia uma fase pra avançar.
     """
     icons = find_icons(minimap.gray, minimap.arrow_side)
     candidates = [
         (_nearest_first(minimap, icons, IconKind.ENEMY), "inimigo mais próximo"),
         (_nearest_first(minimap, icons, IconKind.BOSS), "chefe"),
         (frontier_targets(minimap), "explorar fronteira"),
+        (distant_floor(minimap), "procurar a saída da fase"),
     ]
     for goals, reason in candidates:
         found = _first_reachable(minimap, goals, reason)

@@ -765,3 +765,38 @@ aderência à regra. O número foi publicado com precisão que não tinha.
 **Por que isso importa pro projeto:** a decisão de trocar de modelo repousa
 inteiramente nesta métrica. Comparar dois modelos com 25 cenários cada produziria
 uma "diferença" que é ruído — e a conclusão errada seria registrada como medida.
+
+## ADR-058: Alvos restritos à componente conexa do jogador (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `frontier_targets` e `distant_floor` só devolvem pontos ligados ao
+jogador. `minimap.reachable` calcula essa componente.
+**Motivo:** o minimapa mostra salas **já reveladas mas ainda sem corredor aberto**.
+Medido no frame de referência: o piso tem **15 componentes conexas**, e a do
+jogador é uma delas. Alvos nas outras são visíveis e inalcançáveis — o BFS gasta a
+busca inteira e devolve None, e o planejador some com o alvo sem explicação.
+
+## ADR-059: Último degrau da navegação cobre o fim de fase (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `nav.plan` ganha um quarto alvo — o piso conhecido mais distante do
+jogador — depois de inimigo, chefe e fronteira.
+**Motivo — testado por simulação, sem frame:** não existe frame de fim de fase no
+repositório, mas o estado é reproduzível apagando os ícones do mapa real e
+zerando a névoa. Feito isso, **`plan` devolvia None** e `handle_map` andava pra
+frente às cegas — até o antitravamento abortar a run, justamente no momento em
+que havia uma fase pra avançar.
+**Cascata verificada:**
+
+| situação simulada | alvo escolhido |
+|---|---|
+| mapa original | inimigo mais próximo |
+| inimigos derrotados | chefe |
+| inimigos e chefe derrotados | explorar fronteira |
+| tudo derrotado, mapa revelado | procurar a saída da fase |
+
+**Limite honesto:** isto não *detecta* a saída. `jogo.md` diz que ela é um quadrado
+preto no minimapa, e sem um frame não dá pra escrever esse detector com
+honestidade. Andar pro ponto conhecido mais distante move o agente por regiões que
+ele não percorreu, o que é estritamente melhor que andar pra frente às cegas.
+**Método que vale registrar:** dei este caminho como bloqueado por falta de frames
+em sessões anteriores. Estava errado — apagar ícones de um frame real simula o
+estado e expõe a falha. Nem toda lacuna de dados precisa esperar por dados.
