@@ -67,3 +67,20 @@ def test_fallback_usa_carta_mais_barata_sem_tomo():
 
 def test_fallback_none_quando_nada_e_pagavel():
     assert fallback_index([card("Caro", 5)], 1) is None
+
+
+def test_mana_implausivel_vira_none():
+    """O modelo já devolveu mana=-1 lendo uma carta de bônus, onde o "-1" é o
+    efeito ("custo reduzido em 1"), não o custo. Deixar passar faria `validate`
+    aprovar a carta como se coubesse em qualquer mana."""
+    assert CardScanFrame(nome="Bonus", mana=-1).mana is None
+    assert CardScanFrame(nome="Absurda", mana=99).mana is None
+    assert CardScanFrame(nome="Otto", mana=2).mana == 2
+    assert CardScanFrame(nome="Tomo", mana=0).mana == 0
+
+
+def test_carta_com_mana_invalida_nao_e_jogavel_por_engano():
+    mao = [card("Bonus", -1)]
+    assert mao[0].mana is None
+    assert validate(0, mao, 0) is None, "mana desconhecida não bloqueia"
+    assert affordable(mao, 0) == [0]

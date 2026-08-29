@@ -15,6 +15,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from statistics import median
 
 import cv2
 import numpy as np
@@ -29,7 +30,12 @@ from src.config import PATHS
 from src.llm import ask_vlm
 from src.schemas import CardScanFrame, ChestState, LevelUpState, ShopState
 from src.states import GameState, detect_state
-from src.vision.cards import CostCircle, card_bbox, detect_card_slots
+from src.vision.cards import (
+    CostCircle,
+    card_bbox,
+    detect_card_slots,
+    detect_choice_slots,
+)
 from src.vision.digits import GlyphBook
 from src.vision.hud import HEART_BOX, ORB_BOX, heart_rows, orb_glyphs, read_hp, read_mana
 
@@ -281,12 +287,70 @@ def seek_card(
     return False
 
 
+def read_choices(frame: np.ndarray, db: CardDB | None = None) -> dict | None:
+    """Lê as opções de uma tela de escolha recortando carta por carta.
+
+    Mandar o frame inteiro pro modelo dava leitura ruim pela mesma razão do bug
+    original de combate: a carta fica minúscula depois do resize pra 768px.
+    Medido em três telas de level up reais, o caminho antigo errava o custo de 5
+    das 10 cartas, devolvia descrições de um dígito ("1", "5"), inventava
+    `mana=-1` e apontava a carta selecionada errada.
+
+    None quando não há círculos de custo — aí o chamador cai no prompt de tela
+    inteira, que é o caso das telas de baú sem cartas.
+    """
+    slots = detect_choice_slots(frame)
+    if not slots.circles:
+        return None
+    # Escala pela MEDIANA: a carta de bônus traz um orbe decorativo no lugar do
+    # círculo de custo, e usar o lado dele inflava o recorte dela em ~60%.
+    side = int(median(c.side for c in slots.circles))
+    opcoes = []
+    for i, circle in enumerate(slots.circles):
+        card = _read_choice_card(frame, circle, side, db)
+        opcoes.append({
+            "posicao": i,
+            "nome": card.nome,
+            "descricao": card.descricao,
+            "mana": card.mana,
+            "e_bonus": card.tipo == "bonus",
+        })
+    return {"opcoes": opcoes, "indice_selecionada": slots.selected_idx}
+
+
+def _read_choice_card(
+    frame: np.ndarray, circle: CostCircle, side: int, db: CardDB | None
+) -> CardScanFrame:
+    """Lê uma carta da tela de escolha, com uma segunda tentativa se o custo sair ilegível.
+
+    Observado num recorte perfeitamente legível: o modelo devolveu `mana=None` e
+    descrição truncada. É erro estocástico, não de recorte — repetir uma vez é
+    barato e recupera a maioria. Não confundir com o consenso da ADR-019, que
+    tirava média de leituras feitas num recorte errado.
+    """
+    x, y, w, h = card_bbox(circle, side)
+    crop = frame[max(0, y) : y + h, max(0, x) : x + w]
+    card = read_card(crop, db)
+    if card.mana is None:
+        card = read_card(crop, db)
+    return card
+
+
 _PROMPT_BY_STATE: dict[GameState, tuple[str, type[BaseModel]]] = {
     GameState.LEVEL_UP: ("level_up.txt", LevelUpState),
     GameState.SHOP: ("shop.txt", ShopState),
     GameState.CHEST: ("chest.txt", ChestState),
     GameState.CHEST_CARD_TARGET: ("chest_card_target.txt", ChestState),
     GameState.BOSS_CHEST: ("chest.txt", ChestState),
+}
+
+
+# Telas cujas opções são cartas com círculo de custo — leem melhor recortadas.
+_CHOICE_STATES = {
+    GameState.LEVEL_UP,
+    GameState.CHEST,
+    GameState.BOSS_CHEST,
+    GameState.CHEST_CARD_TARGET,
 }
 
 
@@ -301,6 +365,12 @@ def perceive(frame_path: str) -> PerceivedFrame:
 
     state = detect_state(frame_path)
     logger.debug("Estado detectado: {}", state.value)
+
+    if state in _CHOICE_STATES:
+        frame = cv2.imread(frame_path)
+        read = read_choices(frame, default_carddb())
+        if read is not None:
+            return PerceivedFrame(state=state, data=read)
 
     entry = _PROMPT_BY_STATE.get(state)
     if entry is None:

@@ -544,3 +544,40 @@ reais; não precisava — precisava de uma opção honesta no prompt.
 **Princípio geral:** prompt de múltipla escolha sem escape transforma "não sei" em
 resposta errada com cara de certeza. Toda lista fechada de opções que vai pro
 modelo merece uma saída.
+
+## ADR-047: Telas de escolha lidas carta por carta (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `perception.read_choices` detecta os círculos de custo no painel
+central, recorta cada carta e lê com `card_scan.txt` — o mesmo caminho já
+validado no combate. O prompt de tela inteira (`level_up.txt`, `chest.txt`) vira
+reserva pras telas sem cartas.
+**Motivo:** testando `level_up.txt` contra três telas reais — algo nunca feito
+antes — o caminho de tela inteira errava o custo de **5 das 10** cartas, devolvia
+descrições de um dígito ("1", "5"), inventava `mana=-1` e apontava a carta
+selecionada errada. Mesma causa raiz do bug original de combate: a carta fica
+minúscula depois do resize pra 768px.
+**Resultado medido:** custo correto em 8-10 de 12, descrições reais ("Adicione 2
+Mana.", "Cause 45 de dano. Chance de explodir.") e **carta selecionada 3/3**.
+Os erros restantes mudam de carta entre execuções — são ruído estocástico do
+modelo, não falha sistemática.
+
+**Seleção por ALTURA, não por tamanho:** cartas de bônus trazem um orbe
+decorativo maior que qualquer círculo de custo, e o critério de tamanho apontava
+elas. Medido: a selecionada fica 24-30px acima das demais, e o orbe do bônus fica
+no nível das não-selecionadas.
+
+**Escala pela mediana:** usar o lado do orbe do bônus inflava o recorte dela pra
+296x368 contra ~180x230 das normais, e o excesso de contexto piorava a leitura.
+
+**Confirmação de que 4 opções existem:** um dos frames tem quatro cartas, e
+`jogo.md` menciona "Aumente sua Sorte para uma chance de ter 4 escolhas". A
+detecção acertou a contagem nos três.
+
+## ADR-048: Custo de mana implausível vira `None` (2026-08-29)
+**Decisão:** `CardScanFrame` valida `mana` em 0..9; fora disso, `None`.
+**Motivo:** o modelo devolveu `mana=-1` lendo uma carta de bônus, onde o "-1" é o
+**efeito** ("custo de mana reduzido em 1"), não o custo. Sem a validação isso
+chegaria a `combat.validate`, que compara `custo > mana` — e `-1` passa em
+qualquer comparação, aprovando a carta como se sempre coubesse.
+**Princípio:** saída de modelo que viola uma regra conhecida do jogo deve virar
+"não sei", não ser propagada. `None` já tem tratamento em todo o caminho.

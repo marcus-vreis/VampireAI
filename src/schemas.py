@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------- Percepção: estados estruturados ----------
+
+
+_MAX_MANA = 9
 
 
 class CardScanFrame(BaseModel):
@@ -19,6 +22,19 @@ class CardScanFrame(BaseModel):
     mana: int | None = None
     descricao: str | None = None
     tipo: Literal["ataque", "tomo", "armadura", "utilitario", "bonus", "?"] = "?"
+
+    @field_validator("mana")
+    @classmethod
+    def _mana_plausivel(cls, value: int | None) -> int | None:
+        """Custo fora de 0..9 vira None em vez de propagar.
+
+        O modelo já devolveu `mana=-1` lendo uma carta de bônus, cujo "-1" é o
+        efeito ("custo reduzido em 1"), não o custo. Deixar passar faria
+        `combat.validate` aprovar como se coubesse em qualquer mana.
+        """
+        if value is None or 0 <= value <= _MAX_MANA:
+            return value
+        return None
 
 
 class StateDetection(BaseModel):

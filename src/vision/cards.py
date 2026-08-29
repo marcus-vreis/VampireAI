@@ -28,6 +28,13 @@ _MAGENTA_LO, _MAGENTA_HI = np.array([138, 90, 90]), np.array([176, 255, 255])
 
 # Região do leque, com folga à esquerda pra não cortar o círculo da carta da ponta.
 _HAND_BOX = (235, 380, 1035, 720)
+# Painel central das telas de escolha (level up, baú). As cartas ali usam o mesmo
+# círculo de custo da mão, então o mesmo detector serve.
+_CHOICE_BOX = (270, 150, 1030, 520)
+# Na tela de escolha a selecionada é a mais ALTA, não a maior: cartas de bônus
+# trazem um orbe decorativo grande que engana o critério de tamanho. Medido em
+# frames reais: a selecionada fica 24-30px acima das outras.
+_CHOICE_RAISED_PX = 15
 
 _MIN_SIDE, _MAX_SIDE = 16, 46
 _MIN_ASPECT, _MAX_ASPECT = 0.72, 1.38
@@ -140,22 +147,52 @@ def _selected_index(circles: list[CostCircle]) -> int | None:
 
 
 def detect_card_slots(frame: np.ndarray) -> CardSlots:
-    """Localiza os círculos de custo e o cursor num frame BGR do jogo."""
-    x0, y0, x1, y1 = _HAND_BOX
+    """Localiza os círculos de custo e o cursor na MÃO de combate."""
+    return _slots(frame, _HAND_BOX, _selected_index)
+
+
+def detect_choice_slots(frame: np.ndarray) -> CardSlots:
+    """Idem, no painel central das telas de escolha (level up, baú).
+
+    A seleção é decidida por ALTURA, não por tamanho: cartas de bônus trazem um
+    orbe decorativo grande que vencia o critério de tamanho e apontava a carta
+    errada. A selecionada é a que sobe — medido em 24-30px acima das demais.
+    """
+    return _slots(frame, _CHOICE_BOX, _highest_index)
+
+
+def _slots(frame: np.ndarray, box: tuple[int, int, int, int], pick) -> CardSlots:
+    x0, y0, x1, y1 = box
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[y0:y1, x0:x1]
     circles = _dedup(_candidates(hsv, x0, y0))
-    return CardSlots(circles=circles, selected_idx=_selected_index(circles))
+    return CardSlots(circles=circles, selected_idx=pick(circles))
 
 
-def card_bbox(circle: CostCircle) -> tuple[int, int, int, int]:
+def _highest_index(circles: list[CostCircle]) -> int | None:
+    """Índice do círculo visivelmente mais alto, ou None se estão todos no mesmo nível."""
+    if not circles:
+        return None
+    top = min(range(len(circles)), key=lambda i: circles[i].y)
+    others = [c.y for i, c in enumerate(circles) if i != top]
+    if not others:
+        return top
+    return top if min(others) - circles[top].y >= _CHOICE_RAISED_PX else None
+
+
+def card_bbox(circle: CostCircle, side: int | None = None) -> tuple[int, int, int, int]:
     """Retângulo (x, y, w, h) da carta a que o círculo pertence.
 
     Proporções medidas em frames reais: a carta é ~7.4x o lado do círculo em
     largura e ~9.2x em altura, ancorada logo acima e à esquerda dele. Com folga
     deliberada — este recorte é o que vai pro VLM ler, então cortar o fim do nome
     ou da descrição custa mais caro que incluir um pedaço da carta vizinha.
+
+    `side` sobrescreve a escala. Serve pras cartas de bônus, que no lugar do
+    círculo de custo trazem um orbe decorativo bem maior: usar o lado dele
+    inflava o recorte a 296x368 contra os ~180x230 das cartas normais, e o
+    excesso de contexto atrapalhava a leitura.
     """
-    s = circle.side
+    s = side if side is not None else circle.side
     return (
         int(circle.x + _CARD_DX_RATIO * s),
         int(circle.y + _CARD_DY_RATIO * s),
