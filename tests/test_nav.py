@@ -111,7 +111,6 @@ def test_cascata_de_prioridade_desce_ao_derrotar_alvos(monkeypatch):
 
     import numpy as np
 
-    import src.nav
     from src.vision.minimap import read_minimap
 
     minimap = read_minimap(load(REFERENCE))
