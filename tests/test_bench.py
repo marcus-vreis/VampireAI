@@ -37,3 +37,27 @@ def test_tally_calcula_percentual():
     t.legal = 23
     assert round(t.rate(t.legal)) == 92
     assert Tally(total=0).rate(0) == 0.0
+
+
+def test_margem_encolhe_com_mais_cenarios():
+    """Sem a margem o número é lido como mais preciso do que é: duas execuções
+    de n=25 na mesma configuração deram 60% e 48% de aderência à regra."""
+    pequena = Tally(total=25).margin(14)
+    grande = Tally(total=100).margin(55)
+    assert pequena > 15
+    assert grande < pequena
+
+
+def test_margem_zero_sem_cenarios():
+    assert Tally(total=0).margin(0) == 0.0
+
+
+def test_relatorio_mostra_a_margem(capsys):
+    from src.bench import report
+
+    t = Tally(total=50)
+    t.parsed, t.legal, t.by_rule, t.latencies = 50, 46, 27, [1.6]
+    report({"modelo-x": t})
+    saida = capsys.readouterr().out
+    assert "±" in saida
+    assert "50 cenários" in saida

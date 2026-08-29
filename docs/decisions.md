@@ -260,18 +260,25 @@ julgar qualidade de decisão seria cara e subjetiva. Mas a legalidade de uma
 jogada é uma **regra que o código já conhece** — então o benchmark corrige a
 própria prova, sem rótulo nenhum. Isso o torna executável hoje, antes de existir
 dataset.
-**Baseline medida (qwen2.5vl:7b, 25 cenários, seed 7):**
+**Baseline medida (qwen2.5vl:7b, seed 7):**
 
-| parse | legal | regra | mediana |
-|---|---|---|---|
-| 100% | 92% | 60% | 1.62s |
+| n | parse | legal | regra | mediana |
+|---|---|---|---|---|
+| 25 (subdimensionada) | 100% | 92% | 60% | 1.62s |
+| 25 (repetição) | 100% | 96% | 48% | 1.62s |
+| **60** | **100±0%** | **92±7%** | **55±13%** | 1.67s |
+
+As duas execuções de n=25 deram 60% e 48% de aderência à regra **na mesma
+configuração**. Ambas estavam certas dentro do ruído: com 25 cenários a margem de
+95% passa de 20pp. Ver ADR-057.
 
 Ou seja: o modelo sempre produz JSON válido, mas **8% das jogadas são ilegais**
 (o validador da ADR-026 as intercepta, ao custo de uma repergunta cada) e **40%
 divergem da estratégia central do jogo**. É o número a bater ao testar um modelo
 de texto dedicado.
-**Ressalva:** com n=25 a margem ainda é larga (~±10pp em 92%). Uma amostra de 5
-cenários dava 80%/20%, o que mostra que amostra pequena aqui é ruído, não sinal.
+**Ressalva (revista):** a estimativa original de "±10pp" subestimava. A margem
+correta em 25 cenários é ~±20pp na taxa de aderência à regra, o que se confirmou
+empiricamente: 60% e 48% na mesma configuração. Ver ADR-057.
 **Limitação:** "regra" não é gabarito absoluto — uma jogada fora da heurística
 pode ser melhor num contexto específico. Divergência sistemática, porém, indica
 que o modelo não entendeu a mecânica de combo por custo crescente.
@@ -732,3 +739,29 @@ novo. O caminho pros 13% restantes é **outro modelo**, medível com
 `python -m src.bench`, não pré-processamento de imagem.
 **Mitigação que fica:** a segunda leitura quando o custo sai ilegível (ADR-051).
 Sendo as amostras independentes, 13% viram ~1,7%.
+
+## ADR-057: O bench declara a própria margem de erro (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o relatório imprime `taxa±margem` (95%), o default de cenários sobe
+de 20 para 50, e o rodapé diz explicitamente que diferença menor que a margem não
+é diferença.
+**Motivo — descoberto tentando medir uma melhoria:** rerodei o bench com a mesma
+seed depois de mudar o prompt de combate e normalizar a grafia da ação, pra ver
+se as mudanças ajudaram. Deu **legal 92%→96%, regra 60%→48%**. Parecia que uma
+métrica subiu e a outra despencou.
+**Com n=60, as duas caem no meio: 92% e 55%.** As mudanças de prompt não moveram
+nada mensurável — as execuções de n=25 estavam apenas oscilando.
+**O achado é sobre o instrumento:** a baseline da ADR-032 foi registrada com n=25
+e uma ressalva de "±10pp" que eu mesmo estimei mal. A margem real ali é ~±20pp na
+aderência à regra. O número foi publicado com precisão que não tinha.
+
+| n | margem em torno de 55% |
+|---|---|
+| 10 | ±31pp |
+| 25 | ±20pp |
+| 50 | ±14pp |
+| 100 | ±10pp |
+
+**Por que isso importa pro projeto:** a decisão de trocar de modelo repousa
+inteiramente nesta métrica. Comparar dois modelos com 25 cenários cada produziria
+uma "diferença" que é ruído — e a conclusão errada seria registrada como medida.

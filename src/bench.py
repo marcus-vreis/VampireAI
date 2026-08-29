@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import statistics
 import time
@@ -78,6 +79,18 @@ class Tally:
 
     def rate(self, hits: int) -> float:
         return 100.0 * hits / self.total if self.total else 0.0
+
+    def margin(self, hits: int) -> float:
+        """Margem de erro de ~95% da taxa, em pontos percentuais.
+
+        Sem ela o número é lido como mais preciso do que é. Com 25 cenários a
+        margem passa de 20pp: duas execuções da mesma configuração deram 60% e
+        48% de aderência à regra, e as duas estavam certas dentro do ruído.
+        """
+        if not self.total:
+            return 0.0
+        p = hits / self.total
+        return 100.0 * 1.96 * math.sqrt(max(p * (1 - p), 1e-9) / self.total)
 
 
 def build_scenarios(n: int, seed: int) -> list[Scenario]:
@@ -139,18 +152,25 @@ def run(models: list[str], scenarios: list[Scenario]) -> dict[str, Tally]:
     return results
 
 
+def _cell(tally: Tally, hits: int) -> str:
+    return f"{tally.rate(hits):.0f}±{tally.margin(hits):.0f}%"
+
+
 def report(results: dict[str, Tally]) -> None:
-    print(f"\n{'modelo':32} {'parse':>7} {'legal':>7} {'regra':>7} {'mediana':>9}")
-    print("-" * 68)
+    print(f"\n{'modelo':28} {'parse':>12} {'legal':>12} {'regra':>12} {'mediana':>9}")
+    print("-" * 78)
     for model, t in results.items():
         median = statistics.median(t.latencies) if t.latencies else 0.0
         print(
-            f"{model:32} {t.rate(t.parsed):>6.0f}% {t.rate(t.legal):>6.0f}% "
-            f"{t.rate(t.by_rule):>6.0f}% {median:>8.2f}s"
+            f"{model:28} {_cell(t, t.parsed):>12} {_cell(t, t.legal):>12} "
+            f"{_cell(t, t.by_rule):>12} {median:>8.2f}s"
         )
+    n = next(iter(results.values())).total if results else 0
     print(
         "\nparse = JSON válido no schema | legal = cabe na mana e no índice"
         "\nregra = bate com a heurística de jogo.md (tomo barato primeiro)"
+        f"\n±  = margem de ~95% com {n} cenários. Diferença menor que a margem"
+        "\n     entre dois modelos NÃO é diferença — aumente --scenarios."
     )
 
 
@@ -161,7 +181,9 @@ def main() -> int:
         default=f"{LLM.text_model}",
         help="Lista separada por vírgula. Default: o TEXT_MODEL configurado.",
     )
-    parser.add_argument("--scenarios", type=int, default=20)
+    # 25 cenários dão margem de mais de 20pp na taxa de aderência à regra — não
+    # dá pra comparar dois modelos com isso. 50 é o mínimo defensável.
+    parser.add_argument("--scenarios", type=int, default=50)
     parser.add_argument("--seed", type=int, default=7, help="Mesma seed = mesmos cenários.")
     args = parser.parse_args()
 
