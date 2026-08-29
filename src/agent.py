@@ -22,7 +22,7 @@ from src import gamepad, input_exec
 from src.capture import grab
 from src.combat import Rejection, fallback_index, validate
 from src.config import GAMEPAD, PATHS
-from src.llm import ask_vlm
+from src.llm import ModelUnavailableError, ask_vlm
 from src.memory import Memory, default_memory
 from src.nav import plan
 from src.perception import (
@@ -437,6 +437,10 @@ def loop(max_iters: int | None = None) -> int:
             except NotTheGameError as e:
                 logger.error("{}", e)
                 return 2
+            except ModelUnavailableError as e:
+                # Insistir não adianta: o servidor responde e o modelo não roda.
+                logger.error("{}", e)
+                return 3
             except (ValueError, RuntimeError) as e:
                 parse_fails += 1
                 logger.error("Falha no turno ({}/{}): {}", parse_fails, _MAX_PARSE_FAILS, e)

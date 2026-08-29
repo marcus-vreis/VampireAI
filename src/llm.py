@@ -21,9 +21,21 @@ from src.config import LLM, LLM_LOG_FILE, PATHS
 
 _client: OpenAI | None = None
 
+
+class ModelUnavailableError(RuntimeError):
+    """O servidor responde mas o modelo não roda. Repetir não adianta."""
+
 # Guardar a resposta é o que permite auditar acurácia depois. Antes só gravávamos
 # o tamanho, então "a leitura piorou" era impressão e não número.
 _LOG_TEXT_CHARS = 2000
+
+# Sonda de saúde depois de erro de transporte. Observado numa execução real: o
+# runner do Ollama morreu e cada chamada seguinte queimava 3 tentativas de ~42s
+# antes de desistir — mais de 2 minutos por passo, com o agente parecendo
+# travado. A sonda é texto puro e curta: se ela responde, o problema era daquela
+# chamada; se não responde, insistir só desperdiça tempo.
+_HEALTH_TIMEOUT_S = 10.0
+_RUNNER_DEAD_MARKERS = ("unexpectedly stopped", "GGML_ASSERT", "failed to load model")
 
 
 def _get_client() -> OpenAI:
@@ -178,6 +190,12 @@ def ask_vlm(
                 LLM.max_retries,
                 e,
             )
+            if _looks_like_dead_runner(e) and not _runner_alive():
+                raise ModelUnavailableError(
+                    f"o modelo '{model}' não está rodando. O servidor Ollama "
+                    "responde, mas o runner morreu — reinicie `ollama serve` e "
+                    "confira `ollama ps`."
+                ) from e
             _log_call(
                 {
                     "ts": datetime.now(timezone.utc).isoformat(),
@@ -201,6 +219,25 @@ def ask_vlm(
     raise RuntimeError(
         f"VLM falhou após {LLM.max_retries} tentativas (call={call_id}): {last_error}"
     )
+
+
+def _looks_like_dead_runner(error: Exception) -> bool:
+    text = str(error)
+    return any(marker in text for marker in _RUNNER_DEAD_MARKERS)
+
+
+def _runner_alive() -> bool:
+    """Uma chamada de texto curta e barata. False se o modelo não carrega."""
+    try:
+        probe = OpenAI(
+            base_url=LLM.base_url, api_key=LLM.api_key, timeout=_HEALTH_TIMEOUT_S
+        )
+        probe.chat.completions.create(
+            model=LLM.text_model, messages=[{"role": "user", "content": "ok"}]
+        )
+    except Exception:  # noqa: BLE001 - a sonda existe pra devolver um booleano
+        return False
+    return True
 
 
 def _ping() -> int:

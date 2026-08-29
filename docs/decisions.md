@@ -500,3 +500,27 @@ motivo de cada aposentadoria está na ADR correspondente e o conteúdo está no 
 
 **Verificação:** 121 testes passando e o replay sobre 160 frames com 0 erros
 depois da remoção.
+
+## ADR-045: Falha rápida quando o runner do modelo morre (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** erro de transporte cujo texto indica runner morto dispara uma sonda
+de texto curta (10s). Se a sonda também falha, `ask_vlm` levanta
+`ModelUnavailableError` na hora, e o agente encerra com código 3 e mensagem
+acionável em vez de tratar como falha de parse.
+**Motivo, observado numa execução real:** rodando o replay com o modelo, o runner
+do Ollama morreu (`model runner has unexpectedly stopped`) e **toda chamada
+seguinte queimava 3 tentativas de ~42s** — mais de 2 minutos por passo, com o
+agente aparentando estar travado. Não havia nada no código que distinguisse "esta
+chamada falhou" de "o modelo não está rodando".
+**Diagnóstico descartado:** a mensagem do Ollama culpa limitação de recurso, mas
+`nvidia-smi` mostrava **13.7 GB livres de 16.3 GB**. Não era VRAM. O `/api/ps`
+mostrava zero modelos carregados: o runner tinha morrido e ficado morto.
+**Não reproduzível sob demanda:** testando depois, imagens de seis formatos
+sintéticos e seis recortes reais de carta passaram todas. Provavelmente o gatilho
+foi um `GGML_ASSERT` no encoder visual sobre alguma imagem específica, que
+derrubou o runner e deixou o servidor num estado ruim. A defesa vale
+independentemente da causa.
+**Efeito colateral bom da investigação:** os recortes de carta agora leem bem —
+`Gatti Amari` mana=1, `Phiera Der Tuthello` mana=3, `Faca` mana=0. Comparado com
+o cache poluído de antes (`Pughnala`, `Bastardato`, vários `mana: None`), confirma
+que a correção do recorte (ADR-022) e do canto do custo no prompt surtiram efeito.
