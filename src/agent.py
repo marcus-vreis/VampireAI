@@ -273,6 +273,17 @@ def handle_game_complete(memory: Memory | None = None) -> None:
     input_exec.confirm()
 
 
+def handle_deck(memory: Memory | None = None) -> None:  # noqa: ARG001
+    """Fecha a tela "Baralho".
+
+    Não é um estado do jogo em si — é o jogador (ou um botão a mais) abrindo a
+    visão do deck. Não há nada a decidir ali, só sair. Se o cancel não fechar, o
+    antitravamento escalona.
+    """
+    logger.info("Tela Baralho — fechando")
+    input_exec.cancel()
+
+
 def handle_title(memory: Memory | None = None) -> None:  # noqa: ARG001
     logger.info("Tela de título — apertando X")
     input_exec.confirm()
@@ -301,6 +312,7 @@ _HANDLERS = {
     GameState.TITLE: handle_title,
     GameState.MENU: handle_menu,
     GameState.GAME_OVER: handle_game_over,
+    GameState.DECK: handle_deck,
     GameState.SHOP: handle_menu,  # placeholder
 }
 

@@ -350,3 +350,19 @@ beira da morte, então as cartas de armadura do deck nunca são jogadas.
    linha nunca foi inserida na lista de partes. Os testes exercitavam `_hp_line`
    isolado e passavam. Lição: testar a função que formata não prova que o dado
    chega ao destino. `tests/test_agent_memory.py` agora testa o prompt montado.
+
+## ADR-037: Estado `deck` para a tela "Baralho" (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** 13º estado, detectado por CV. Handler fecha com quadrado.
+**Motivo:** achado observando o jogo ao vivo, não nos frames salvos. As cartas do
+deck também desenham círculo de custo, então a tela passava por combate e o
+agente tentaria jogar carta ali — navegando o deck em vez de lutar.
+**Assinatura:** painel ardósia em 0.181, entre o máximo do combate (0.052) e o
+mínimo do diálogo (0.56). O alinhamento em linhas foi testado como sinal
+alternativo e **não** discrimina: o leque de combate é achatado no meio e chega a
+3 círculos no mesmo y.
+**Ressalva:** o limiar repousa sobre **uma** observação. Confirmar com mais
+amostras na sessão de rotulagem.
+**Vale o registro do método:** este estado era invisível nos 118 frames salvos.
+Observar o jogo rodando, mesmo sem o agente no controle, encontrou em 20 amostras
+o que nenhuma análise offline encontraria.

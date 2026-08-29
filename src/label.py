@@ -13,8 +13,10 @@ que a comparação entre modelos vai usar.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,7 +25,10 @@ from loguru import logger
 
 from src.capture import grab
 from src.config import PROJECT_ROOT
+from src.perception import default_glyphbook, read_mana_hybrid
 from src.vision.cards import detect_card_slots
+from src.vision.hud import read_hp
+from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
 from src.vision.screen import signature
 
@@ -138,6 +143,40 @@ def _ask_int(prompt: str) -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
+def watch(interval_s: float, samples: int) -> int:
+    """Observa o jogo sem tocar nele: captura periódica e relatório do que a CV vê.
+
+    Existe pra validar o sensor contra o jogo rodando sem o risco de o agente
+    assumir o controle. Não emite input nenhum — nem cria o gamepad virtual.
+
+    Usa o caminho híbrido de leitura de mana, então também aquece o livro de
+    glifos: depois de ver cada algarismo duas vezes, a leitura passa a ser local.
+    """
+    print(f"Observando a cada {interval_s}s por {samples} amostras. Jogue normalmente.\n")
+    print(f"{'#':>3} {'estado':10} {'cartas':>6} {'cursor':>6} {'mana':>5} {'HP':>7}  minimapa")
+    for i in range(1, samples + 1):
+        shot = grab(state="watch")
+        frame = cv2.imread(str(shot))
+        sig = signature(frame)
+        slots = detect_card_slots(frame)
+        book = default_glyphbook()
+        mana = read_mana_hybrid(frame, book)
+        hp = read_hp(frame, book)
+        minimap = read_minimap(frame)
+        mm = "-"
+        if minimap is not None:
+            icons = find_icons(minimap.gray, minimap.arrow_side)
+            counts = collections.Counter(ic.kind.value for ic in icons)
+            mm = f"{minimap.facing.value}, {counts.get('inimigo', 0)} inimigos, chefe={counts.get('chefe', 0)}"
+        print(
+            f"{i:>3} {sig.verdict.value:10} {slots.visible_total:>6} "
+            f"{str(slots.selected_idx):>6} {str(mana):>5} {str(hp):>7}  {mm}"
+        )
+        if i < samples:
+            time.sleep(interval_s)
+    return 0
+
+
 def summary() -> int:
     if not LABELS_FILE.is_file():
         print("Nenhum rótulo ainda. Rode `python -m src.label` pra criar.")
@@ -161,6 +200,11 @@ def main() -> int:
         "--summary", action="store_true", help="Resume o dataset já gravado e sai."
     )
     parser.add_argument(
+        "--watch", type=int, metavar="N",
+        help="Observa N amostras sem emitir input nenhum e relata o que a CV vê.",
+    )
+    parser.add_argument("--interval", type=float, default=3.0)
+    parser.add_argument(
         "--details", action="store_true",
         help="Em combate, também pergunta tamanho da mão e cursor (rótulo mais rico).",
     )
@@ -168,6 +212,8 @@ def main() -> int:
 
     if args.summary:
         return summary()
+    if args.watch:
+        return watch(args.interval, args.watch)
     if not sys.stdin.isatty():
         logger.error("Rode num terminal interativo — a rotulagem lê teclas.")
         return 2

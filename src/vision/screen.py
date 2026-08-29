@@ -9,6 +9,10 @@ perguntar.
 O classificador não tenta cobrir tudo. Ele resolve com certeza os casos que
 dominam o loop (mapa, combate) e delega os raros ao VLM — com a lista de opções
 já restrita, o que também torna a pergunta mais fácil pra ele.
+
+A tela "Baralho" entrou depois, achada observando o jogo ao vivo: as cartas do
+deck também têm círculo de custo, então ela passava por combate e o agente
+tentaria jogar carta ali.
 """
 
 from __future__ import annotations
@@ -32,6 +36,10 @@ _ORB_BOX = (1015, 455, 1145, 585)
 # no máximo 0.11 em qualquer outra tela.
 _PARCHMENT_MAP = 0.50
 _SLATE_DIALOG = 0.45
+# A tela "Baralho" mostra o deck inteiro num painel de tamanho intermediário.
+# Medido: combate fica em 0.017-0.052, baralho em 0.181, diálogo em 0.56-0.63.
+# ATENÇÃO: baseado em UMA observação ao vivo. Confirmar com mais amostras.
+_SLATE_DECK = 0.10
 _HUD_PRESENT = 0.02
 
 
@@ -40,6 +48,7 @@ class Verdict(str, Enum):
 
     MAP = "map"
     COMBAT = "combat"
+    DECK = "deck"  # tela "Baralho", o deck inteiro
     DIALOG = "dialog"  # level_up / chest / chest_card_target / boss_chest
     UNKNOWN = "unknown"  # delega ao VLM
     NOT_GAME = "not_game"  # a captura não pegou o jogo
@@ -105,6 +114,10 @@ def signature(frame: np.ndarray) -> ScreenSignature:
 def _verdict(parchment: float, slate: float, cards: int, hud: bool) -> Verdict:
     if slate >= _SLATE_DIALOG:
         return Verdict.DIALOG
+    if slate >= _SLATE_DECK:
+        # As cartas do deck também têm círculo de custo, então sem esta checagem
+        # a tela "Baralho" passava por combate e o agente tentava jogar carta ali.
+        return Verdict.DECK
     if parchment >= _PARCHMENT_MAP:
         return Verdict.MAP
     if cards >= 1:

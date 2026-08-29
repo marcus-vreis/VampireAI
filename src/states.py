@@ -36,6 +36,7 @@ class GameState(str, Enum):
     TITLE = "title"
     MENU = "menu"
     GAME_OVER = "game_over"
+    DECK = "deck"  # tela "Baralho": o deck inteiro, aberto pelo jogador
 
 
 class NotTheGameError(RuntimeError):
@@ -93,6 +94,8 @@ def detect_state(frame_path: str) -> GameState:
         return GameState.COMBAT
     if sig.verdict is Verdict.MAP:
         return GameState.MAP
+    if sig.verdict is Verdict.DECK:
+        return GameState.DECK
     if sig.verdict is Verdict.DIALOG:
         return _ask_state(frame_path, "detect_dialog.txt", _DIALOG_STATES)
     return _ask_state(frame_path, "detect_other.txt", _OTHER_STATES)

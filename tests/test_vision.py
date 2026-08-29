@@ -31,6 +31,9 @@ LABELED = [
     ("20260802T153740534_map.png", Verdict.MAP, None),
     ("20260503T114343443_level_up.png", Verdict.DIALOG, None),
     ("20260802T153731541_combat_initial.png", Verdict.NOT_GAME, None),
+    # Achado observando o jogo ao vivo: as cartas do deck também têm círculo de
+    # custo, então esta tela passava por combate e o agente tentaria jogar ali.
+    ("deck_baralho_referencia.png", Verdict.DECK, None),
 ]
 
 

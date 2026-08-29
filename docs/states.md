@@ -15,8 +15,14 @@ do mapa, apertando ← quatro vezes enquanto andava pela masmorra.
 | Sinal | Mapa | Combate | Diálogo |
 |---|---|---|---|
 | pergaminho no minimapa | 0.62-0.76 | ≤ 0.32 | 0.05-0.07 |
-| painel ardósia no centro | < 0.03 | < 0.06 | 0.56-0.63 |
+| painel ardósia no centro | < 0.03 | 0.017-0.052 | 0.56-0.63 |
 | círculos de custo na mão | 0 | ≥ 1 | 0 |
+
+A tela **"Baralho"** fica no meio do painel ardósia, em 0.181 — entre o máximo do
+combate (0.052) e o mínimo do diálogo (0.56). Ela precisou de estado próprio
+porque as cartas do deck também têm círculo de custo, então passava por combate e
+o agente tentaria jogar carta ali. Achada observando o jogo ao vivo; o limiar
+ainda repousa sobre **uma** amostra e merece confirmação.
 
 As margens são grandes, então a separação é confiável. O veredito é um de:
 
@@ -44,6 +50,7 @@ VLM inventava um estado para eles.
 | `title` | logo do jogo | CV → VLM (subgrupo outros) |
 | `menu` | abas Unlocks / Settings / Crawlers | CV → VLM (subgrupo outros) |
 | `game_over` | tela de derrota | CV → VLM (subgrupo outros) |
+| `deck` | tela "Baralho", o deck inteiro | CV: painel ardósia intermediário |
 
 ## Tratamento por estado
 
