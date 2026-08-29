@@ -10,7 +10,10 @@ import pytest
 from src.vision.digits import GlyphBook, find_glyphs, group_rows
 from src.vision.hud import HEART_BOX, orb_glyphs, read_hp, text_mask
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 # Frame conferido olhando a imagem: orbe mostra 4, coração mostra 61/61.
 REFERENCE = "20260802T154240385_combat_initial.png"
 

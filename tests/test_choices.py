@@ -9,7 +9,10 @@ import pytest
 
 from src.vision.cards import card_bbox, detect_choice_slots
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 
 # Gabarito conferido olhando cada imagem. O terceiro tem QUATRO opções — jogo.md
 # menciona "chance de ter 4 escolhas" — e a última é carta de bônus.

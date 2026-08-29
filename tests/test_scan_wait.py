@@ -11,7 +11,10 @@ import pytest
 from src import perception
 from src.vision.cards import CostCircle
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 # Sequência real de scan: o cursor anda uma carta pra esquerda a cada passo.
 SEQUENCIA = [
     "20260802T154032207_card_scan_1.png",

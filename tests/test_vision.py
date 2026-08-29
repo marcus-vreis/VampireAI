@@ -17,7 +17,10 @@ from src.vision.cards import card_bbox, detect_card_slots
 from src.vision.minimap import Facing, Turn, read_minimap, relative_turn
 from src.vision.screen import Verdict, signature
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 
 # Rotulados à mão inspecionando cada imagem. (arquivo, estado, cursor esperado).
 LABELED = [

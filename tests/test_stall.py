@@ -10,7 +10,10 @@ import pytest
 
 from src.stall import Nudge, StallDetector
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 
 # Pares medidos em frames reais. Delta da assinatura 16x16:
 # mesma tela (só animação de fundo) 0.89-1.46; cursor andando uma carta 4.44-8.43.

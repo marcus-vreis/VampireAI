@@ -11,7 +11,10 @@ import pytest
 from src.carddb import CardDB, CardRecord, perceptual_hash
 from src.vision.cards import card_bbox, detect_card_slots
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 
 
 def art(seed: int, w: int = 220, h: int = 310) -> np.ndarray:

@@ -12,7 +12,10 @@ from src.nav import plan
 from src.vision.icons import IconKind, find_icons
 from src.vision.minimap import Facing, Turn, locate, read_minimap
 
-FRAMES = Path(__file__).resolve().parent.parent / "frames"
+_RAIZ = Path(__file__).resolve().parent.parent
+# Gabarito versionado. `frames/` é gitignored E rotacionado durante uma run,
+# então teste que dependa dele passa a pular em silêncio — pior que falhar.
+FRAMES = _RAIZ / "dataset" / "referencia"
 
 # Frame conferido ícone a ícone olhando a imagem: 6 caveiras, 1 chefe, 1 "?".
 REFERENCE = "20260802T154240385_combat_initial.png"

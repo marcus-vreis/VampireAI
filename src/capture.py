@@ -11,14 +11,38 @@ import mss
 from loguru import logger
 from PIL import Image
 
-from src.config import PATHS
+from src.config import PATHS, frames_to_keep
 from src.window import find_game_window
 
 _FILENAME_TS = "%Y%m%dT%H%M%S%f"
 
+# Rotação de frames. Cada captura escreve ~500 KB, e o agente captura várias
+# vezes por passo: medido, uma run de 1h escreveria ~2.7 GB e uma de 3h, ~8 GB —
+# contra os 10 GB que o README pede de disco no total. Os frames existem pra
+# depurar o passado recente, não pra arquivar a run inteira.
+_KEEP_FRAMES = frames_to_keep()
+# Listar o diretório a cada captura custaria caro com milhares de arquivos.
+_PRUNE_EVERY = 50
+_since_prune = 0
+
 
 def _timestamp() -> str:
     return datetime.now().strftime(_FILENAME_TS)[:-3]
+
+
+def _prune() -> None:
+    """Apaga os frames mais antigos além do limite. Nunca toca em `dataset/`."""
+    global _since_prune
+    _since_prune += 1
+    if _KEEP_FRAMES <= 0 or _since_prune < _PRUNE_EVERY:
+        return
+    _since_prune = 0
+    arquivos = sorted(PATHS.frames.glob("*.png"), key=lambda p: p.stat().st_mtime)
+    for antigo in arquivos[:-_KEEP_FRAMES]:
+        try:
+            antigo.unlink()
+        except OSError as e:  # noqa: PERF203 - um arquivo travado não pode parar a run
+            logger.debug("não consegui apagar {}: {}", antigo.name, e)
 
 
 def grab(state: str | None = None) -> Path:
@@ -39,6 +63,7 @@ def grab(state: str | None = None) -> Path:
     suffix = f"_{state}" if state else ""
     out_path = PATHS.frames / f"{_timestamp()}{suffix}.png"
     img.save(out_path, format="PNG")
+    _prune()
     logger.debug("Frame salvo em {}", out_path)
     return out_path
 

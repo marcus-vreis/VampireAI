@@ -930,3 +930,32 @@ todos os lugares que precisavam dela.
 **Avisa em vez de bloquear, deliberadamente:** quem roda uma CLI dessas está
 depurando de propósito e às vezes quer ver o efeito noutro lugar. No agente, que
 roda sozinho por minutos, bloquear é certo; numa ferramenta manual, avisar basta.
+
+## ADR-067: Frames de debug rotacionados (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `capture.grab` mantém no máximo `FRAMES_KEEP` frames (default 400,
+~200 MB) e apaga os mais antigos. `0` desliga.
+**Motivo, medido:** cada captura escreve **502 KB**, e o agente captura várias
+vezes por passo (o loop, a travessia da mão, cada passo do `seek_card`). Projetado:
+uma run de 1h escreve **~2.7 GB**; uma de 3h, **~8 GB** — contra os 10 GB que o
+README pede de disco no total, dos quais 6 já são o modelo. A primeira run longa
+encheria o disco.
+**Por que rotação e não formato mais barato:** JPEG cortaria ~8x o tamanho, mas os
+detectores dependem de faixas de cor estreitas (o círculo de custo, o tom 136 dos
+ícones) e artefato de compressão mexe justamente nisso. Não vale arriscar a
+percepção pra economizar disco.
+**Os frames existem pra depurar o passado recente**, não pra arquivar a run.
+**Poda a cada 50 capturas**, não a cada uma: listar milhares de arquivos custaria
+mais que a própria captura.
+
+## ADR-068: Frames de gabarito versionados em `dataset/referencia/` (2026-08-29)
+**Decisão:** os 18 frames que a suíte usa como gabarito saíram de `frames/` e
+foram versionados.
+**Motivo:** eles viviam em `frames/`, que é **gitignored** — num clone novo os
+testes passariam a **pular em silêncio**, que é pior que falhar. A rotação da
+ADR-067 tornaria isso agudo: um gabarito apagado no meio de uma sessão longa
+produziria a mesma falha silenciosa, e sem aviso nenhum.
+**Efeito colateral bom:** o teste de integração do replay rodava sobre o conteúdo
+variável de `frames/` — media coisa diferente a cada execução, e as asserções
+eram limiares frouxos ("mais de 100 frames"). Agora roda sobre um conjunto curado
+e as asserções são exatas. A suíte inteira ficou **2.5x mais rápida** (26s → 10s).

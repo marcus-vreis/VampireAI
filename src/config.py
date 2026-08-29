@@ -161,6 +161,15 @@ GAMEPAD = _build_gamepad()
 
 LLM_LOG_FILE = PATHS.logs / "llm.jsonl"
 
+
+def frames_to_keep() -> int:
+    """Quantos frames de debug manter em disco. 0 desliga a rotação.
+
+    Cada captura escreve ~500 KB e o agente captura várias vezes por passo: uma
+    run de 1h escreveria ~2.7 GB sem rotação.
+    """
+    return _env_int("FRAMES_KEEP", 400)
+
 # Regiões de UI vivem em `src/vision/regions.py`, medidas contra o client area que
 # `src/window.py` localiza. As que existiam aqui foram removidas na ADR-022: a
 # antiga `hand_area = (380, 460, 480, 260)` cobria menos da metade do leque e era
