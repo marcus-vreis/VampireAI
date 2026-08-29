@@ -430,3 +430,23 @@ timing de gamepad validado no jogo, e mudá-lo às cegas é o oposto do princíp
 acima.
 **Teto de 0.8s:** atingido só quando o cursor realmente não se move — na ponta do
 leque, onde a travessia deve mesmo terminar.
+
+## ADR-042: Cursor posicionado por identidade, não por índice (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `perception.seek_card` anda com ←/→ até a carta em destaque **ser** a
+escolhida, conferindo a identidade pelo `CardDB` a cada passo. Substitui
+`select_and_confirm(alvo - cursor)`.
+**Motivo — bug latente:** o agente calculava o delta, navegava e apertava X **sem
+conferir onde o cursor tinha parado**. Com o índice errado por qualquer razão
+(contagem, oclusão, carta comprada no meio do turno), ele jogava a carta errada em
+silêncio. Não havia nenhuma verificação entre decidir e executar.
+**Efeito colateral de desempenho:** dispensa refazer a travessia inteira depois de
+cada jogada. A distância média até o alvo é ~1/3 da mão, então o custo por jogada
+cai de uma travessia completa (~2.5s numa mão de 6) para ~0.9s. Turno de 6 cartas
+jogando 4: de ~20s para ~13s, dentro da meta de 15s.
+**Cartas de mesmo nome são intercambiáveis:** se a mão tem dois "Tomo Vazio",
+jogar qualquer um dá no mesmo, então parar no primeiro que casar é correto — e
+resolve de graça a ambiguidade que uma busca por índice teria.
+**Falha com segurança:** se a carta destacada não estiver no cache, ou não
+pertencer à mão conhecida, devolve False sem apertar X, e o próximo passo do loop
+refaz a travessia. Melhor não jogar do que jogar errado.

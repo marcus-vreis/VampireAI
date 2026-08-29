@@ -31,6 +31,7 @@ from src.perception import (
     default_glyphbook,
     perceive,
     scan_combat_hand,
+    seek_card,
 )
 from src.schemas import ChoiceAction, CombatAction
 from src.stall import Nudge, StallDetector
@@ -151,11 +152,27 @@ def handle_combat(memory: Memory | None = None) -> None:
 
     assert target is not None
     card = scan.cards[target]
-    logger.info(
-        "Jogar '{}' idx={} (cursor={}), motivo: {}", card.nome, target, scan.cursor_idx, motivo
+    logger.info("Jogar '{}' idx={}, motivo: {}", card.nome, target, motivo)
+    _play_card(target, scan, memory, motivo)
+
+
+def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) -> None:
+    """Posiciona o cursor pela IDENTIDADE da carta e só então confirma.
+
+    Antes o agente calculava `alvo - cursor`, navegava e apertava X sem conferir
+    onde o cursor tinha parado — com o índice errado, jogava a carta errada em
+    silêncio. Agora ele anda até VER a carta escolhida em destaque.
+    """
+    card = scan.cards[target]
+    if seek_card(target, scan.cards, default_carddb()):
+        _remember(memory, f"combate: jogou {card.nome} — {motivo}", "combat")
+        input_exec.confirm()
+        return
+    logger.warning(
+        "Não consegui posicionar o cursor em '{}' — refazendo a leitura da mão",
+        card.nome,
     )
-    _remember(memory, f"combate: jogou {card.nome} (idx={target}) — {motivo}", "combat")
-    input_exec.select_and_confirm(target - scan.cursor_idx)
+    _remember(memory, f"combate: cursor não chegou em {card.nome}", "combat")
 
 
 def _remember(memory: Memory | None, event: str, state: str) -> None:

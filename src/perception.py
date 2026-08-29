@@ -168,15 +168,15 @@ def read_hp_hybrid(
     return current, maximum
 
 
-def _tap_left_and_wait(previous_x: int) -> tuple[np.ndarray, CostCircle | None]:
-    """Aperta ← e captura até o cursor sair do lugar. Devolve o frame estável.
+def _tap_and_wait(previous_x: int, left: bool = True) -> tuple[np.ndarray, CostCircle | None]:
+    """Aperta ← (ou →) e captura até o cursor sair do lugar. Devolve o frame estável.
 
     Substitui um `sleep` fixo de 400ms que respondia por 81% do custo de cada
     passo da travessia. Esperar o EFEITO em vez de um tempo arbitrário é mais
     rápido quando o jogo responde logo e mais seguro quando ele demora — o sleep
     cego podia ler um frame ainda em animação.
     """
-    gamepad.tap_left(1)
+    (gamepad.tap_left if left else gamepad.tap_right)(1)
     deadline = time.monotonic() + _CURSOR_MOVE_TIMEOUT_S
     frame, selected = None, None
     while True:
@@ -227,7 +227,7 @@ def scan_combat_hand(
         positions.append(selected.x)
         cards.append(read_card(_crop_card(frame, selected), db))
         logger.info("scan {}: {} (mana={})", len(cards), cards[-1].nome, cards[-1].mana)
-        frame, selected = _tap_left_and_wait(final_x)
+        frame, selected = _tap_and_wait(final_x)
 
     if not positions:
         return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp)
@@ -235,6 +235,44 @@ def scan_combat_hand(
     return HandScan(
         cards=[cards[i] for i in order], cursor_idx=cursor, mana=mana, hp=hp
     )
+
+
+def _identify(frame: np.ndarray, circle: CostCircle, db: CardDB | None) -> str | None:
+    """Nome da carta destacada pelo cache. None se ela não é conhecida."""
+    if db is None:
+        return None
+    hit = db.lookup(_crop_card(frame, circle))
+    return hit.nome if hit is not None else None
+
+
+def seek_card(
+    target: int, hand: list[CardScanFrame], db: CardDB | None, max_steps: int = _MAX_HAND
+) -> bool:
+    """Move o cursor até a carta destacada SER a desejada. True se chegou.
+
+    Posiciona por identidade, não por aritmética de índice. O agente antes
+    calculava `alvo - cursor`, navegava e apertava X **sem conferir onde o cursor
+    parou** — com o índice errado, jogava a carta errada em silêncio.
+
+    Cartas de mesmo nome são intercambiáveis: se a mão tem dois "Tomo Vazio",
+    jogar qualquer um dá no mesmo, então parar no primeiro que casar é correto.
+    """
+    if not 0 <= target < len(hand):
+        return False
+    wanted = hand[target].nome
+    for _ in range(max_steps):
+        frame = cv2.imread(str(grab(state="seek")))
+        selected = detect_card_slots(frame).selected
+        if selected is None:
+            return False
+        current = _identify(frame, selected, db)
+        if current == wanted:
+            return True
+        if current is None or current not in [c.nome for c in hand]:
+            return False  # perdemos a referência: melhor refazer a travessia
+        here = next(i for i, c in enumerate(hand) if c.nome == current)
+        _tap_and_wait(selected.x, left=here > target)
+    return False
 
 
 _PROMPT_BY_STATE: dict[GameState, tuple[str, type[BaseModel]]] = {

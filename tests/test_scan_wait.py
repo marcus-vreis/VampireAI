@@ -47,7 +47,7 @@ def test_para_assim_que_o_cursor_anda():
     x_anterior = perception.detect_card_slots(anterior).selected.x
 
     with mock.patch.object(perception, "grab", fonte), mock.patch.object(perception, "gamepad"):
-        _frame, selecionada = perception._tap_left_and_wait(x_anterior)
+        _frame, selecionada = perception._tap_and_wait(x_anterior)
 
     assert fonte.chamadas == 1
     assert selecionada is not None
@@ -61,7 +61,7 @@ def test_insiste_enquanto_o_cursor_nao_saiu_do_lugar():
     x_anterior = perception.detect_card_slots(anterior).selected.x
 
     with mock.patch.object(perception, "grab", fonte), mock.patch.object(perception, "gamepad"):
-        _frame, selecionada = perception._tap_left_and_wait(x_anterior)
+        _frame, selecionada = perception._tap_and_wait(x_anterior)
 
     assert fonte.chamadas == 3
     assert abs(selecionada.x - x_anterior) >= perception._SAME_CARD_PX
@@ -78,7 +78,7 @@ def test_desiste_no_teto_quando_o_cursor_nunca_anda():
         mock.patch.object(perception, "gamepad"),
         mock.patch.object(perception, "_CURSOR_MOVE_TIMEOUT_S", 0.15),
     ):
-        _frame, selecionada = perception._tap_left_and_wait(x_anterior)
+        _frame, selecionada = perception._tap_and_wait(x_anterior)
 
     assert selecionada is not None
     assert abs(selecionada.x - x_anterior) < perception._SAME_CARD_PX
