@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from src import gamepad
 from src.capture import grab
 from src.carddb import CardDB, CardRecord
-from src.config import GAMEPAD, PATHS
+from src.config import PATHS
 from src.llm import ask_vlm
 from src.schemas import CardScanFrame, ChestState, LevelUpState, ShopState
 from src.states import GameState, detect_state
@@ -36,6 +36,9 @@ from src.vision.hud import HEART_BOX, ORB_BOX, heart_rows, orb_glyphs, read_hp, 
 # Duas leituras do cursor a menos de 12px são a mesma carta.
 _SAME_CARD_PX = 12
 _MAX_HAND = 12
+# Teto de espera pelo cursor sair do lugar depois de um ←. Só é atingido quando
+# o cursor realmente não se move (ponta do leque), e aí a travessia termina.
+_CURSOR_MOVE_TIMEOUT_S = 0.8
 
 
 class PerceivedFrame(BaseModel):
@@ -165,6 +168,25 @@ def read_hp_hybrid(
     return current, maximum
 
 
+def _tap_left_and_wait(previous_x: int) -> tuple[np.ndarray, CostCircle | None]:
+    """Aperta ← e captura até o cursor sair do lugar. Devolve o frame estável.
+
+    Substitui um `sleep` fixo de 400ms que respondia por 81% do custo de cada
+    passo da travessia. Esperar o EFEITO em vez de um tempo arbitrário é mais
+    rápido quando o jogo responde logo e mais seguro quando ele demora — o sleep
+    cego podia ler um frame ainda em animação.
+    """
+    gamepad.tap_left(1)
+    deadline = time.monotonic() + _CURSOR_MOVE_TIMEOUT_S
+    frame, selected = None, None
+    while True:
+        frame = cv2.imread(str(grab(state="scan")))
+        selected = detect_card_slots(frame).selected
+        moved = selected is not None and abs(selected.x - previous_x) >= _SAME_CARD_PX
+        if moved or time.monotonic() >= deadline:
+            return frame, selected
+
+
 def _order_by_position(positions: list[int], final_x: int) -> tuple[list[int], int]:
     """Ordem esquerda→direita e o índice onde o cursor parou."""
     order = sorted(range(len(positions)), key=lambda i: positions[i])
@@ -189,13 +211,13 @@ def scan_combat_hand(
     hp: tuple[int, int] | None = None
     final_x = 0
 
+    frame = cv2.imread(str(grab(state="scan_0")))
+    selected = detect_card_slots(frame).selected
     for step in range(_MAX_HAND):
-        frame = cv2.imread(str(grab(state=f"scan_{step}")))
         if mana is None:
             mana = read_mana_hybrid(frame, book)
         if hp is None:
             hp = read_hp_hybrid(frame, book)
-        selected = detect_card_slots(frame).selected
         if selected is None:
             logger.info("Sem carta destacada no passo {} — fim da travessia", step)
             break
@@ -205,8 +227,7 @@ def scan_combat_hand(
         positions.append(selected.x)
         cards.append(read_card(_crop_card(frame, selected), db))
         logger.info("scan {}: {} (mana={})", len(cards), cards[-1].nome, cards[-1].mana)
-        gamepad.tap_left(1)
-        time.sleep(GAMEPAD.post_dpad_settle_s)
+        frame, selected = _tap_left_and_wait(final_x)
 
     if not positions:
         return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp)

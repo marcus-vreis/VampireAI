@@ -403,3 +403,30 @@ em todas, enquanto a mana era lida corretamente. O teste unitário não pegava
 porque ele mesmo ensinava o livro antes de ler.
 **Verificado ao vivo:** depois da correção, HP=(61, 61) em todas as 6 amostras
 seguintes, com o modelo chamado uma vez só.
+
+## ADR-041: Esperar o efeito, não um tempo fixo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** a travessia da mão substitui o `sleep(post_dpad_settle_s)` por
+captura repetida até o cursor sair do lugar, com teto de 0.8s.
+**Motivo, medido antes de mexer:** cronometrando cada operação de um passo da
+travessia contra o jogo aberto —
+
+| operação | custo |
+|---|---|
+| captura + salvar PNG | 78 ms |
+| `cv2.imread` | 13 ms |
+| `detect_card_slots` | 3.3 ms |
+| leitura de mana/HP em cache | ~1.6 ms |
+| **`sleep` fixo pós-D-pad** | **400 ms** |
+
+O sleep respondia por **81%** do custo. Um turno de 6 cartas jogando 4 dava ~22s,
+acima da meta de 15s. Com a espera adaptativa o passo cai de ~824ms para ~424ms.
+**O ganho de robustez importa mais que o de velocidade:** tempo fixo erra nos dois
+sentidos — longo demais quando o jogo responde rápido, curto demais quando ele
+demora, e aí a leitura acontece sobre um frame ainda em animação. Esperar o efeito
+observável não tem esse problema.
+**Não mexemos em `GAMEPAD.between_actions_s`** (250ms, dentro de `press`): é
+timing de gamepad validado no jogo, e mudá-lo às cegas é o oposto do princípio
+acima.
+**Teto de 0.8s:** atingido só quando o cursor realmente não se move — na ponta do
+leque, onde a travessia deve mesmo terminar.
