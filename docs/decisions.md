@@ -651,3 +651,26 @@ estivesse correta. A pré-condição já era necessária; ela só não estava es
 **Limitação conhecida:** foco não garante ausência de sobreposição (um overlay
 sempre-no-topo continua entrando). O `NOT_GAME` da ADR-022 segue como segunda
 linha.
+
+## ADR-053: Teto no resumo da memória (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `Memory` limita o resumo a 24 linhas / 4000 caracteres, na escrita e
+também na leitura. O corte mantém o FIM — o mais recente é o que orienta a
+próxima decisão.
+**Motivo — bug severo, encontrado medindo:** o `notes.md` desta máquina estava com
+**254 mil caracteres**, e `agent._memory_block` injeta `summary()` inteiro em toda
+decisão de combate e de escolha. Eram **~63 mil tokens por prompt**, que nenhum
+contexto comporta. As decisões que testei funcionaram só porque passei
+`memory=None`.
+**Causa:** o accordion só comprimia quando `summarize_fn` funcionava. A versão sem
+LLM fazia `prior_summary + últimos 20 eventos` — **acrescentava** a cada colapso e
+nunca encolhia. Não era accordion, era acumulador. E `default_memory()` é chamado
+sem `summarize_fn` no replay e em qualquer caminho que não queira gastar modelo.
+**Por que cortar também na leitura:** um `notes.md` herdado de versão anterior (ou
+crescido por outro caminho) não pode estourar o prompt de quem só quis ler. Defesa
+nos dois lados.
+**Medido depois:** o mesmo arquivo de 254 KB passa a render 2.286 caracteres
+(~571 tokens) — redução de 111x. E 200 eventos sem LLM mantêm o resumo estável em
+~2.200 caracteres, em vez de crescer indefinidamente.
+**Lição:** o que vai dentro de um prompt precisa de teto por construção. "O
+accordion cuida disso" era verdade só no caminho feliz.
