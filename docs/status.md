@@ -228,6 +228,42 @@ de toda tela possível.
 **Testes:** 93 passando (`tests/test_stall.py` novo, 7 testes; 3 novos para HP).
 
 
+### Sessão 2026-08-29 (cont. 5) — validação contra o jogo aberto (ADR-037 a ADR-041)
+
+Primeira vez que o sensor foi exercitado contra o jogo rodando, em modo de
+observação (`python -m src.label --watch`), sem enviar input. Cada rodada de
+observação achou defeito que a análise offline não achava.
+
+**Validado ao vivo:**
+- `src/window.py` localizou a janela em `x=320 y=191`. O retângulo calculado
+  anterior teria errado a posição e deslocado todos os recortes.
+- Mana lida corretamente (4) em 24 amostras; HP em (61, 61) depois da correção.
+  O modelo é chamado uma vez por algarismo e a CV assume.
+
+**Defeitos encontrados e corrigidos:**
+- **Estado `deck`** (ADR-037): a tela "Baralho" passava por combate, porque as
+  cartas do deck também têm círculo de custo. O agente tentaria jogar carta ali.
+  Invisível nos 118 frames salvos.
+- **HUD escurecido** (ADR-038): o jogo escurece o HUD quando um painel abre, e o
+  limiar absoluto de brilho perdia TODOS os dígitos do coração. Trocado por Otsu
+  com margem medida (faixa segura 0.45-0.60, escolhido 0.55).
+- **Chaves de glifo instáveis** (ADR-039): o mesmo dígito produzia mapas de bits
+  diferentes. Busca virou vizinho mais próximo; medido: mesmo dígito varia até
+  57 bits, dígitos diferentes ficam a 92 no mínimo, corte em 72.
+- **HP nunca era lido** (ADR-040): nada ensinava os dígitos do coração. O teste
+  unitário não pegava porque ele mesmo ensinava o livro antes de ler.
+- **Sleep fixo dominava a latência** (ADR-041): cronometrado contra o jogo, o
+  `sleep` de 400ms era 81% do custo de cada passo da travessia. Trocado por
+  espera até o cursor sair do lugar. Passo: ~824ms → ~424ms.
+
+**Defeito meu, corrigido:** o replay tentava mockar o gamepad trocando
+`agent.input_exec` e não funcionava — `_NUDGE_ACTION` liga as funções no import.
+Saiu input real e desconectou o controle no jogo aberto. A trava agora mora em
+`gamepad.set_dry_run`, antes do driver.
+
+**Testes:** 111 passando. **GitHub:** branch `sensor-deterministico`, PR #1.
+
+
 ## Próximo
 
 1. **Sessão de rotulagem** — `python -m src.label --details`. Alvo: 60-100 frames

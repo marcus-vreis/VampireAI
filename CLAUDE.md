@@ -104,6 +104,11 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
 - **Testar o caminho, não só a peça.** Um `_hp_line` correto com teste passando
   não provou que o HP chegava ao prompt — não chegava. Prompts e payloads que
   vão pro modelo merecem teste do texto montado
+- **Observar o jogo rodando acha o que frame salvo não acha.** O estado `deck`, o
+  escurecimento do HUD e o HP nunca lido saíram todos de
+  `python -m src.label --watch`, que não envia input nenhum
+- **Nada de caractere fora do cp1252 em texto que possa ser impresso.** Seta e
+  emoji estouram `UnicodeEncodeError` no console do Windows; já aconteceu 3x
 - Nunca commitar `frames/`, `logs/`, `notes/`, `.env`, modelos. `dataset/` SIM
 - Nunca tocar arquivos do Steam ou da pasta do jogo
 - Antes de mudar prompts, ler `@docs/prompts.md`
@@ -134,6 +139,11 @@ Fatos do jogo que moldam o código e não são óbvios:
 Latência alvo por turno: <15s. Depois da ADR-022 o orçamento típico de um turno
 de combate é 1-2 chamadas ao VLM (era 6+N). Modelo carrega em ~30s na 1ª chamada
 — manter Ollama rodando entre sessões.
+
+Custos medidos contra o jogo aberto (mediana de 5): captura+PNG 78ms, `imread`
+13ms, `detect_card_slots` 3.3ms, mana/HP em cache ~1.6ms. **A CV não é o
+gargalo** — espera por input é. Por isso a travessia espera o cursor mover em vez
+de dormir um tempo fixo (ADR-041).
 
 A leitura de mana se auto-otimiza: cada algarismo custa uma chamada de modelo até
 aparecer duas vezes, e depois é reconhecido localmente (ADR-033). Instalar o
