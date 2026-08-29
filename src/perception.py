@@ -315,7 +315,15 @@ def read_choices(frame: np.ndarray, db: CardDB | None = None) -> dict | None:
             "mana": card.mana,
             "e_bonus": card.tipo == "bonus",
         })
-    return {"opcoes": opcoes, "indice_selecionada": slots.selected_idx}
+    return {
+        "opcoes": opcoes,
+        "indice_selecionada": slots.selected_idx,
+        # Sem isto, `handle_chest` lia `tipo` ausente como "vazio" e sacava
+        # dinheiro em vez de pegar a carta. A distinção que dá pra fazer pelos
+        # círculos é bônus vs carta; "evolucao" e "vazio" não têm carta com custo
+        # e caem no prompt de tela inteira.
+        "tipo": "bonus" if any(o["e_bonus"] for o in opcoes) else "carta",
+    }
 
 
 def _read_with_retry(crop: np.ndarray, db: CardDB | None) -> CardScanFrame:

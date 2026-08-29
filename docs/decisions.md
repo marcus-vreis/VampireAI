@@ -800,3 +800,23 @@ ele não percorreu, o que é estritamente melhor que andar pra frente às cegas.
 **Método que vale registrar:** dei este caminho como bloqueado por falta de frames
 em sessões anteriores. Estava errado — apagar ícones de um frame real simula o
 estado e expõe a falha. Nem toda lacuna de dados precisa esperar por dados.
+
+## ADR-060: A ausência de opções é o sinal de baú vazio, não o campo `tipo`
+**Data:** 2026-08-29
+**Decisão:** `handle_chest` decide pelo conteúdo — sem opções, saca dinheiro; com
+opções, escolhe. `read_choices` passa a devolver `tipo` inferido (bônus se alguma
+opção não tem custo, senão carta).
+**Motivo — regressão que eu mesmo introduzi na ADR-047:** ao trocar a leitura das
+telas de escolha pra recorte carta a carta, `read_choices` passou a devolver
+`opcoes` e `indice_selecionada` mas **não `tipo`**. E `handle_chest` fazia
+`data.get("tipo", "vazio")` — recebia "vazio", apertava quadrado e **descartava
+toda recompensa de baú**.
+**Como apareceu:** o handler de baú nunca tinha sido exercitado, nem com mock. Fui
+escrever o primeiro teste dele e o bug estava na primeira linha que li.
+**Por que a nova regra é mais robusta:** `tipo` é uma inferência que pode faltar ou
+vir errada; "há opções pra escolher" é observável e suficiente. Um baú de dinheiro
+não tem carta com círculo de custo, então `read_choices` devolve None e o prompt
+de tela inteira assume — que é o caminho certo pra "vazio" e "evolucao".
+**Padrão que se repete:** três das últimas correções foram regressões introduzidas
+por mim em rodadas anteriores desta mesma sessão. Refatoração larga sem teste no
+caminho de saída é onde elas nascem.

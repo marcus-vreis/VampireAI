@@ -329,11 +329,15 @@ def handle_chest(memory: Memory | None = None) -> None:
     if perceived.state not in _CHEST_STATES:
         return
     data = perceived.data or {}
-    tipo = data.get("tipo", "vazio")
     opcoes = data.get("opcoes", [])
-    if tipo == "vazio" or not opcoes:
-        input_exec.cancel()  # quadrado = sacar dinheiro
+    if not opcoes:
+        # Baú sem carta: quadrado saca o dinheiro. A ausência de opções é o
+        # sinal, não o campo `tipo` — que a leitura por recorte não preenchia e
+        # fazia o agente descartar toda recompensa.
+        logger.info("Baú sem opções — sacando dinheiro")
+        input_exec.cancel()
         return
+    tipo = data.get("tipo") or "carta"
     _choose_and_confirm(opcoes, data.get("indice_selecionada"), f"baú ({tipo})", memory)
 
 
