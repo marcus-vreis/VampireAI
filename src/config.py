@@ -60,13 +60,29 @@ class WindowRect:
 
 @dataclass(frozen=True)
 class LLMConfig:
+    """Dois modelos: um enxerga, outro raciocina.
+
+    Depois que a CV assumiu a percepção geométrica, as chamadas ao modelo se
+    separaram em duas naturezas. Transcrever uma carta precisa de visão. Escolher
+    a jogada e a recompensa é texto puro — essas chamadas já passavam `image=None`
+    para um VLM, onde a torre visual não contribui nada e o backbone de linguagem
+    é mais fraco que o de um modelo de texto do mesmo tamanho.
+
+    `text_model` cai em `vision_model` quando não configurado, então uma
+    instalação existente continua funcionando sem mudar nada.
+    """
+
     base_url: str
     api_key: str
-    model: str
+    vision_model: str
+    text_model: str
     timeout_s: float
     max_retries: int
     backoff_base_s: float
     image_max_side: int
+
+    def pick(self, has_image: bool) -> str:
+        return self.vision_model if has_image else self.text_model
 
 
 @dataclass(frozen=True)
@@ -75,15 +91,6 @@ class GamepadConfig:
     between_actions_s: float
     boot_delay_s: float
     post_dpad_settle_s: float
-
-
-@dataclass(frozen=True)
-class PerceptionConfig:
-    """Tunables da percepção (especialmente contagem de cartas)."""
-    count_samples: int  # k-vote: quantas chamadas VLM por contagem (mode wins)
-    enhance_contrast: float  # 1.0 = sem mudança; >1 amplifica
-    enhance_saturation: float  # idem; ajuda destacar bolinhas azuis
-    enhance_sharpness: float  # idem; bordas de números/bolinhas
 
 
 @dataclass(frozen=True)
@@ -124,10 +131,12 @@ def _build_window() -> WindowRect:
 
 
 def _build_llm() -> LLMConfig:
+    vision = _env_str("VLM_MODEL", "qwen2.5vl:7b")
     return LLMConfig(
         base_url=_env_str("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
         api_key=_env_str("OLLAMA_API_KEY", "ollama"),
-        model=_env_str("VLM_MODEL", "qwen2.5vl:7b"),
+        vision_model=vision,
+        text_model=_env_str("TEXT_MODEL", vision),
         timeout_s=_env_float("LLM_TIMEOUT_SECONDS", 60.0),
         max_retries=_env_int("LLM_MAX_RETRIES", 3),
         backoff_base_s=_env_float("LLM_BACKOFF_BASE_SECONDS", 1.5),
@@ -145,49 +154,15 @@ def _build_gamepad() -> GamepadConfig:
     )
 
 
-def _build_perception() -> PerceptionConfig:
-    return PerceptionConfig(
-        count_samples=max(1, _env_int("PERCEPTION_COUNT_SAMPLES", 3)),
-        enhance_contrast=_env_float("PERCEPTION_ENHANCE_CONTRAST", 1.25),
-        enhance_saturation=_env_float("PERCEPTION_ENHANCE_SATURATION", 1.4),
-        enhance_sharpness=_env_float("PERCEPTION_ENHANCE_SHARPNESS", 1.2),
-    )
-
-
 PATHS = _build_paths()
 WINDOW = _build_window()
 LLM = _build_llm()
 GAMEPAD = _build_gamepad()
-PERCEPTION = _build_perception()
 
 LLM_LOG_FILE = PATHS.logs / "llm.jsonl"
 
-
-def is_region_set(region: tuple[int, int, int, int]) -> bool:
-    return all(v >= 0 for v in region) and region[2] > 0 and region[3] > 0
-
-
-# Regiões para CROPS de UI antes de mandar pro VLM. (x, y, w, h) relativos à janela do jogo (1280x720).
-# Estratégia: recortar pequenas áreas focadas → VLM 7B fica muito mais preciso.
-# Estimativas baseadas em screenshot real de combate. Refinar com `python -m src.perception --crop NAME`.
-UI_REGIONS: dict[str, tuple[int, int, int, int]] = {
-    # Mão: leque inferior central com cartas (4-7 cartas)
-    "hand_area": (380, 460, 480, 260),
-    # Orbe de mana: bola azul grande no canto inferior direito (acima de "Finalizar turno")
-    "mana_orb": (1000, 470, 140, 140),
-    # Coração de HP: canto inferior esquerdo
-    "hp_heart": (140, 470, 140, 140),
-    # Stats topo-esquerdo (ouro, vida%, crit%, dmg)
-    "stats_top_left": (15, 50, 220, 130),
-    # Stats topo-direito (probabilidades de fase)
-    "stats_top_right": (1080, 50, 200, 80),
-}
-
-# Regiões para OCR (pytesseract). Mantemos vazio por enquanto — VLM via crops já cobre.
-OCR_REGIONS: dict[str, tuple[int, int, int, int]] = {
-    "hp_player": (-1, -1, -1, -1),
-    "mana": (-1, -1, -1, -1),
-}
-
-OCR_UPSCALE = 4
-OCR_THRESHOLD = 140
+# Regiões de UI vivem em `src/vision/regions.py`, medidas contra o client area que
+# `src/window.py` localiza. As que existiam aqui foram removidas na ADR-022: a
+# antiga `hand_area = (380, 460, 480, 260)` cobria menos da metade do leque e era
+# a causa raiz da contagem e da leitura de carta erradas — não vale deixar à mão
+# pra ser reusada por engano. Limiares de OCR estão em `src/vision/hud.py`.

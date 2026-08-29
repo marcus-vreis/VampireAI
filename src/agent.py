@@ -3,6 +3,10 @@
 Filosofia: capture → detect_state → handler. Cada handler executa UMA micro-ação
 via gamepad e retorna ao loop, que recaptura. Erros não acumulam — cada passo
 se auto-corrige no próximo screenshot.
+
+O que mudou com o sensor determinístico: estado, cartas, cursor e navegação no
+mapa vêm de `src.vision`, não do VLM. O modelo decide (qual carta jogar, qual
+recompensa pegar) e o código valida antes de executar.
 """
 
 from __future__ import annotations
@@ -11,24 +15,32 @@ import argparse
 import json
 import time
 
+import cv2
 from loguru import logger
 
 from src import gamepad, input_exec
 from src.capture import grab
+from src.combat import Rejection, fallback_index, validate
 from src.config import GAMEPAD, PATHS
 from src.llm import ask_vlm
 from src.memory import Memory, default_memory
-from src.perception import perceive, scan_combat_hand
-from src.schemas import (
-    ChoiceAction,
-    CombatAction,
-    MapDirection,
+from src.nav import plan
+from src.perception import (
+    HandScan,
+    default_carddb,
+    default_glyphbook,
+    perceive,
+    scan_combat_hand,
 )
-from src.states import GameState
+from src.schemas import ChoiceAction, CombatAction
+from src.stall import Nudge, StallDetector
+from src.states import GameState, NotTheGameError
+from src.vision.minimap import Turn, read_minimap
 
 _MAX_PARSE_FAILS = 3
 _LOOP_SLEEP_S = 0.4
 _MEMORY_RECENT_EVENTS = 8
+_MAX_ILLEGAL_RETRIES = 2
 
 
 def _memory_block(memory: Memory | None) -> str:
@@ -53,112 +65,141 @@ def _memory_block(memory: Memory | None) -> str:
     return "\n".join(parts)
 
 
-def _decide_combat(
-    state_json: str, scan_json: str, memory: Memory | None = None
-) -> CombatAction:
-    prompt_template = (PATHS.prompts / "combat_decide.txt").read_text(encoding="utf-8")
-    prompt = (
-        prompt_template
-        + _memory_block(memory)
-        + "\n\nESTADO ATUAL DO COMBATE:\n"
-        + state_json
-        + "\n\nSCAN DAS CARTAS NA MÃO (esquerda→direita):\n"
-        + scan_json
-    )
-    result = ask_vlm(None, prompt, schema=CombatAction)
-    return CombatAction(**result)
+def _combat_prompt(scan: HandScan, memory: Memory | None, complaint: str | None) -> str:
+    hand = [
+        {"indice": i, **c.model_dump()} for i, c in enumerate(scan.cards)
+    ]
+    parts = [
+        (PATHS.prompts / "combat_decide.txt").read_text(encoding="utf-8"),
+        _memory_block(memory),
+        f"\n\nMANA DISPONÍVEL: {scan.mana if scan.mana is not None else 'desconhecida'}",
+        _hp_line(scan),
+        "\nMÃO (índices 0 = mais à esquerda):",
+        json.dumps(hand, ensure_ascii=False, indent=2),
+    ]
+    if complaint:
+        parts.append(
+            f"\nATENÇÃO: sua resposta anterior foi rejeitada porque {complaint}. "
+            "Escolha outra carta que respeite a mana e os índices acima."
+        )
+    return "\n".join(parts)
 
 
-def _execute_combat_action(action: CombatAction, current_idx: int | None, total: int) -> None:
-    """Move o cursor por travessia do índice atual até o alvo, e confirma.
+def _hp_line(scan: HandScan) -> str:
+    """Linha de HP para o prompt, com aviso quando está baixo.
 
-    current_idx e indice_alvo são posições 0-based na mão (0 = esquerda).
+    Sem isso o modelo escolhe dano por padrão mesmo à beira da morte, e as cartas
+    de armadura do deck nunca são jogadas.
     """
-    if action.acao == "finalizar_turno":
-        logger.info("Finalizando turno: {}", action.motivo)
-        input_exec.end_turn()
-        return
+    if scan.hp is None:
+        return ""
+    current, maximum = scan.hp
+    fraction = current / maximum if maximum else 1.0
+    alert = "  ATENÇÃO: HP baixo, priorize armadura ou cura." if fraction <= 0.35 else ""
+    return f"HP: {current}/{maximum}{alert}"
 
-    target = action.indice_alvo
-    if target is None or not 0 <= target < total:
-        logger.warning("Ação inválida: indice_alvo={} total={}", target, total)
-        return
 
-    cur = current_idx if current_idx is not None else total - 1
-    delta = target - cur
-    logger.info(
-        "Jogar carta idx={} (cursor={}), motivo: {}", target, cur, action.motivo
-    )
-    input_exec.select_and_confirm(delta)
+def _decide_combat(scan: HandScan, memory: Memory | None) -> CombatAction | None:
+    """Pergunta a jogada ao modelo até vir uma legal. None se ele não conseguir.
+
+    O modelo continua decidindo; o código só recusa o que o jogo recusaria. A
+    contagem de rejeições é o sinal mais direto de quão bom o modelo é na tarefa.
+    """
+    complaint: str | None = None
+    for attempt in range(_MAX_ILLEGAL_RETRIES + 1):
+        result = ask_vlm(None, _combat_prompt(scan, memory, complaint), schema=CombatAction)
+        action = CombatAction(**result)
+        if action.acao == "finalizar_turno":
+            return action
+        verdict = validate(action.indice_alvo, scan.cards, scan.mana)
+        if verdict is None:
+            return action
+        assert isinstance(verdict, Rejection)
+        logger.warning(
+            "Jogada ilegal (tentativa {}/{}): {}",
+            attempt + 1, _MAX_ILLEGAL_RETRIES + 1, verdict.reason,
+        )
+        complaint = verdict.reason
+    return None
 
 
 def handle_combat(memory: Memory | None = None) -> None:
-    """1) Captura → 2) percebe → 3) scan da mão → 4) decide → 5) executa."""
-    frame = str(grab(state="combat_initial"))
-    perceived = perceive(frame)
-    if perceived.state is not GameState.COMBAT:
-        logger.warning("Estado mudou de combat para {} no meio do handler", perceived.state)
-        return
-
-    data = perceived.data or {}
-    total = int(data.get("total_cartas_visiveis", 0) or 0)
-    if total <= 0:
-        logger.info("Sem cartas visíveis — finalizando turno")
+    """Percorre a mão, decide UMA jogada, valida e executa."""
+    scan = scan_combat_hand(default_carddb(), default_glyphbook())
+    if not scan.cards:
+        logger.info("Sem cartas legíveis na mão — finalizando turno")
         input_exec.end_turn()
         return
 
-    current_idx = data.get("indice_selecionada")
-    if current_idx is None:
-        # Cursor não está em nenhuma carta — força ← pra entrar no leque e recaptura.
-        logger.info("Cursor não detectado — apertando ← pra entrar no leque")
-        gamepad.tap_left(1)
-        time.sleep(GAMEPAD.post_dpad_settle_s)
-        frame = str(grab(state="combat_after_settle"))
-        perceived = perceive(frame)
-        data = perceived.data or {}
-        total = int(data.get("total_cartas_visiveis", 0) or 0)
-        current_idx = data.get("indice_selecionada")
-        if current_idx is None:
-            current_idx = total - 1
-            logger.warning("Ainda sem cursor identificado — assumindo idx={}", current_idx)
-
-    scan = scan_combat_hand(frame, total)
-    # Após scan o cursor está na carta MAIS à esquerda (idx 0).
-    cursor_after_scan = 0
-
-    action = _decide_combat(
-        state_json=json.dumps(data, ensure_ascii=False),
-        scan_json=json.dumps([c.model_dump() for c in scan], ensure_ascii=False),
-        memory=memory,
-    )
-    if memory is not None:
-        memory.append(
-            f"combate: {action.acao} idx={action.indice_alvo} ({action.motivo})",
-            state="combat",
-        )
-    _execute_combat_action(action, cursor_after_scan, total)
-
-
-def handle_map(memory: Memory | None = None) -> None:  # noqa: ARG001
-    """Pergunta a direção do alvo e executa UMA micro-ação."""
-    frame = str(grab(state="map"))
-    perceived = perceive(frame)
-    if perceived.state is not GameState.MAP:
+    action = _decide_combat(scan, memory)
+    if action is None:
+        target = fallback_index(scan.cards, scan.mana)
+        if target is None:
+            logger.info("Nada jogável com {} de mana — finalizando turno", scan.mana)
+            input_exec.end_turn()
+            return
+        logger.info("Modelo não achou jogada legal — regra de custo crescente: idx={}", target)
+        motivo = "regra de reserva: custo crescente"
+    elif action.acao == "finalizar_turno":
+        logger.info("Finalizando turno: {}", action.motivo)
+        input_exec.end_turn()
+        _remember(memory, f"combate: finalizar turno ({action.motivo})", "combat")
         return
-    direction = MapDirection(**(perceived.data or {}))
-    logger.info("Direção do alvo: {} ({})", direction.direcao_alvo, direction.motivo)
+    else:
+        target = action.indice_alvo
+        motivo = action.motivo
 
-    if direction.direcao_alvo == "frente":
+    assert target is not None
+    card = scan.cards[target]
+    logger.info(
+        "Jogar '{}' idx={} (cursor={}), motivo: {}", card.nome, target, scan.cursor_idx, motivo
+    )
+    _remember(memory, f"combate: jogou {card.nome} (idx={target}) — {motivo}", "combat")
+    input_exec.select_and_confirm(target - scan.cursor_idx)
+
+
+def _remember(memory: Memory | None, event: str, state: str) -> None:
+    if memory is not None:
+        memory.append(event, state=state)
+
+
+_TURN_ACTION = {
+    Turn.FORWARD: input_exec.walk_forward,
+    Turn.LEFT: input_exec.turn_left,
+    Turn.RIGHT: input_exec.turn_right,
+}
+
+
+def handle_map(memory: Memory | None = None) -> None:
+    """Lê o minimapa e dá UM passo rumo ao alvo.
+
+    Sem VLM: "pra onde ir" está desenhado no minimapa, e uma busca em grafo
+    responde exatamente. Cada passo recaptura, então erro não acumula.
+    """
+    frame = cv2.imread(str(grab(state="map")))
+    minimap = read_minimap(frame)
+    if minimap is None:
+        logger.warning("Minimapa ilegível — andando pra frente pra destravar")
         input_exec.walk_forward()
-    elif direction.direcao_alvo == "esquerda":
-        input_exec.turn_left()
-    elif direction.direcao_alvo == "direita":
-        input_exec.turn_right()
-    elif direction.direcao_alvo == "atras":
-        input_exec.turn_right()
-        input_exec.turn_right()
-    elif direction.direcao_alvo == "no_alvo":
+        return
+
+    step = plan(minimap)
+    if step is None:
+        logger.info("Nada alcançável no mapa — andando pra frente")
         input_exec.walk_forward()
+        return
+
+    logger.info(
+        "Mapa: em {} olhando {} → {} (alvo: {})",
+        minimap.player, minimap.facing.value, step.turn.value, step.reason,
+    )
+    _remember(memory, f"mapa: {step.turn.value} rumo a {step.reason}", "map")
+    if step.turn is Turn.BACK:
+        input_exec.turn_right()
+        time.sleep(GAMEPAD.between_actions_s)
+        input_exec.turn_right()
+        return
+    _TURN_ACTION[step.turn]()
 
 
 def _decide_choice(
@@ -177,67 +218,58 @@ def _decide_choice(
     return ChoiceAction(**result)
 
 
+def _choose_and_confirm(
+    opcoes: list, cur: int | None, contexto: str, memory: Memory | None
+) -> None:
+    """Pede a escolha ao modelo, prende ao intervalo válido e navega até ela."""
+    choice = _decide_choice(json.dumps(opcoes, ensure_ascii=False), contexto, memory)
+    target = max(0, min(choice.indice_alvo, len(opcoes) - 1))
+    if target != choice.indice_alvo:
+        logger.warning("Índice {} fora de 0..{} — usando {}", choice.indice_alvo, len(opcoes) - 1, target)
+    cursor = cur if cur is not None else len(opcoes) - 1
+    logger.info("{}: escolhe idx={} ({})", contexto, target, choice.motivo)
+    _remember(memory, f"{contexto}: idx={target} ({choice.motivo})", contexto)
+    input_exec.select_and_confirm(target - cursor)
+
+
 def handle_level_up(memory: Memory | None = None) -> None:
-    frame = str(grab(state="level_up"))
-    perceived = perceive(frame)
+    perceived = perceive(str(grab(state="level_up")))
     if perceived.state is not GameState.LEVEL_UP:
         return
     data = perceived.data or {}
     opcoes = data.get("opcoes", [])
-    cur = data.get("indice_selecionada")
-    if cur is None:
-        cur = len(opcoes) - 1
+    if not opcoes:
+        logger.warning("Level up sem opções legíveis — confirmando a selecionada")
+        input_exec.confirm()
+        return
+    _choose_and_confirm(opcoes, data.get("indice_selecionada"), "level up", memory)
 
-    choice = _decide_choice(json.dumps(opcoes, ensure_ascii=False), "level up", memory)
-    delta = choice.indice_alvo - cur
-    logger.info("Level up: escolhe idx={} ({})", choice.indice_alvo, choice.motivo)
-    if memory is not None:
-        memory.append(
-            f"level up: idx={choice.indice_alvo} ({choice.motivo})", state="level_up"
-        )
-    input_exec.select_and_confirm(delta)
+
+_CHEST_STATES = (GameState.CHEST, GameState.BOSS_CHEST, GameState.CHEST_CARD_TARGET)
 
 
 def handle_chest(memory: Memory | None = None) -> None:
-    frame = str(grab(state="chest"))
-    perceived = perceive(frame)
-    if perceived.state not in (GameState.CHEST, GameState.BOSS_CHEST, GameState.CHEST_CARD_TARGET):
+    perceived = perceive(str(grab(state="chest")))
+    if perceived.state not in _CHEST_STATES:
         return
     data = perceived.data or {}
     tipo = data.get("tipo", "vazio")
-    if tipo == "vazio":
+    opcoes = data.get("opcoes", [])
+    if tipo == "vazio" or not opcoes:
         input_exec.cancel()  # quadrado = sacar dinheiro
         return
-
-    opcoes = data.get("opcoes", [])
-    if not opcoes:
-        input_exec.cancel()
-        return
-
-    choice = _decide_choice(
-        json.dumps(opcoes, ensure_ascii=False), f"baú ({tipo})", memory
-    )
-    # Heurística: cursor inicia mais à direita por padrão. Quando a percepção
-    # devolve indice_selecionada (chest_card_target), respeita ela.
-    cur = data.get("indice_selecionada")
-    if cur is None:
-        cur = len(opcoes) - 1
-    delta = choice.indice_alvo - cur
-    logger.info("Baú {}: escolhe idx={} ({})", tipo, choice.indice_alvo, choice.motivo)
-    if memory is not None:
-        memory.append(
-            f"baú {tipo}: idx={choice.indice_alvo} ({choice.motivo})", state="chest"
-        )
-    input_exec.select_and_confirm(delta)
+    _choose_and_confirm(opcoes, data.get("indice_selecionada"), f"baú ({tipo})", memory)
 
 
-def handle_stage_complete(memory: Memory | None = None) -> None:  # noqa: ARG001
+def handle_stage_complete(memory: Memory | None = None) -> None:
     logger.info("Fase completa — andando pra frente")
+    _remember(memory, "fase completa", "stage_complete")
     input_exec.walk_forward()
 
 
-def handle_game_complete(memory: Memory | None = None) -> None:  # noqa: ARG001
+def handle_game_complete(memory: Memory | None = None) -> None:
     logger.info("Jogo concluído. Apertando X pra menu principal.")
+    _remember(memory, "JOGO CONCLUÍDO", "game_complete")
     input_exec.confirm()
 
 
@@ -251,8 +283,9 @@ def handle_menu(memory: Memory | None = None) -> None:  # noqa: ARG001
     input_exec.cancel()
 
 
-def handle_game_over(memory: Memory | None = None) -> None:  # noqa: ARG001
+def handle_game_over(memory: Memory | None = None) -> None:
     logger.warning("Game over — encerrando run")
+    _remember(memory, "game over", "game_over")
     raise SystemExit(0)
 
 
@@ -272,6 +305,50 @@ _HANDLERS = {
 }
 
 
+_NUDGE_ACTION = {
+    Nudge.CONFIRM: input_exec.confirm,
+    Nudge.CANCEL: input_exec.cancel,
+    Nudge.FORWARD: input_exec.walk_forward,
+}
+
+
+def _try_unstick(detector: StallDetector, memory: Memory) -> bool:
+    """Empurra um botão quando a tela não muda. False quando esgotou as tentativas.
+
+    Cobre telas que nenhum handler conhece — as duas confirmações que a evolução
+    de carta abre, por exemplo. Sem isso o loop fica preso repetindo a mesma ação
+    pra sempre.
+    """
+    nudge = detector.next_nudge()
+    if nudge is None:
+        return not detector.exhausted
+    logger.warning("Tela não muda há {} passos — tentando {}", detector.patience, nudge.value)
+    memory.append(f"destravando com {nudge.value}", state="stall")
+    _NUDGE_ACTION[nudge]()
+    return True
+
+
+def _step(
+    memory: Memory, last_state: GameState | None, detector: StallDetector
+) -> GameState | None:
+    frame_path = str(grab(state="loop"))
+    detector.observe(cv2.imread(frame_path))
+    if detector.stuck:
+        if not _try_unstick(detector, memory):
+            raise RuntimeError("tela travada e nenhum botão destravou")
+        return last_state
+
+    perceived = perceive(frame_path)
+    if perceived.state is not last_state:
+        memory.append(f"transição → {perceived.state.value}", state=perceived.state.value)
+    handler = _HANDLERS.get(perceived.state)
+    if handler is None:
+        logger.warning("Sem handler para {}", perceived.state)
+    else:
+        handler(memory)
+    return perceived.state
+
+
 def loop(max_iters: int | None = None) -> int:
     PATHS.ensure()
     logger.info("Agente iniciado. Foque a janela do jogo.")
@@ -282,26 +359,17 @@ def loop(max_iters: int | None = None) -> int:
 
     parse_fails = 0
     iters = 0
-    last_state = None
+    last_state: GameState | None = None
+    detector = StallDetector()
     try:
-        while True:
-            if max_iters is not None and iters >= max_iters:
-                logger.info("Limite de iterações atingido")
-                return 0
+        while max_iters is None or iters < max_iters:
             iters += 1
-
             try:
-                frame = str(grab(state="loop"))
-                perceived = perceive(frame)
-                if perceived.state is not last_state:
-                    memory.append(f"transição → {perceived.state.value}", state=perceived.state.value)
-                    last_state = perceived.state
-                handler = _HANDLERS.get(perceived.state)
-                if handler is None:
-                    logger.warning("Sem handler para {}", perceived.state)
-                else:
-                    handler(memory)
+                last_state = _step(memory, last_state, detector)
                 parse_fails = 0
+            except NotTheGameError as e:
+                logger.error("{}", e)
+                return 2
             except (ValueError, RuntimeError) as e:
                 parse_fails += 1
                 logger.error("Falha no turno ({}/{}): {}", parse_fails, _MAX_PARSE_FAILS, e)
@@ -309,8 +377,9 @@ def loop(max_iters: int | None = None) -> int:
                 if parse_fails >= _MAX_PARSE_FAILS:
                     logger.error("3 falhas seguidas — abortando")
                     return 1
-
             time.sleep(_LOOP_SLEEP_S)
+        logger.info("Limite de iterações atingido")
+        return 0
     finally:
         gamepad.reset()
 

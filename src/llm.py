@@ -21,6 +21,10 @@ from src.config import LLM, LLM_LOG_FILE, PATHS
 
 _client: OpenAI | None = None
 
+# Guardar a resposta é o que permite auditar acurácia depois. Antes só gravávamos
+# o tamanho, então "a leitura piorou" era impressão e não número.
+_LOG_TEXT_CHARS = 2000
+
 
 def _get_client() -> OpenAI:
     global _client
@@ -87,18 +91,28 @@ def ask_vlm(
     prompt: str,
     schema: type[BaseModel] | None = None,
     image: Image.Image | None = None,
+    model: str | None = None,
 ) -> dict[str, Any] | str:
-    """Chama o VLM com retry+backoff. Aceita path OU PIL Image (image=). Retorna dict validado se schema, senão str."""
+    """Chama o modelo com retry+backoff. Aceita path OU PIL Image (`image=`).
+
+    O modelo é escolhido pela presença de imagem: com imagem vai pro `VLM_MODEL`,
+    sem imagem vai pro `TEXT_MODEL`. `model=` força um específico — usado pelo
+    bench, que compara candidatos. Retorna dict validado se houver schema, senão
+    a string crua.
+    """
     call_id = uuid.uuid4().hex[:12]
     client = _get_client()
     messages = _build_messages(prompt, image_path, image=image)
     response_format = {"type": "json_object"} if schema is not None else None
+    # Roteamento por natureza da chamada: quem manda imagem precisa do VLM, quem
+    # não manda está pedindo raciocínio e vai pro modelo de texto (ver LLMConfig).
+    model = model or LLM.pick(image_path is not None or image is not None)
 
     last_error: Exception | None = None
     for attempt in range(1, LLM.max_retries + 1):
         started = time.monotonic()
         try:
-            kwargs: dict[str, Any] = {"model": LLM.model, "messages": messages}
+            kwargs: dict[str, Any] = {"model": model, "messages": messages}
             if response_format is not None:
                 kwargs["response_format"] = response_format
 
@@ -116,7 +130,7 @@ def ask_vlm(
                 {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -124,6 +138,7 @@ def ask_vlm(
                     "schema": schema.__name__ if schema else None,
                     "ok": True,
                     "raw_chars": len(content),
+                    "response": result if schema is not None else content[:_LOG_TEXT_CHARS],
                 }
             )
             return result
@@ -142,7 +157,7 @@ def ask_vlm(
                 {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -167,7 +182,7 @@ def ask_vlm(
                 {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -189,14 +204,33 @@ def ask_vlm(
 
 
 def _ping() -> int:
-    logger.info("Pingando {} em {}", LLM.model, LLM.base_url)
-    try:
-        reply = ask_vlm(None, "Olá, está funcionando? Responda em uma frase curta.")
-    except Exception as e:
-        logger.error("Ping falhou: {}", e)
-        return 1
-    print(reply)
-    return 0
+    """Testa os dois modelos. Se forem o mesmo, testa uma vez só."""
+    models = {LLM.text_model: "texto", LLM.vision_model: "visão"}
+    logger.info("Servidor: {}", LLM.base_url)
+    failed = False
+    for name, role in models.items():
+        logger.info("Pingando {} ({})...", name, role)
+        try:
+            reply = _ask_model(name, "Responda em uma frase curta: você está funcionando?")
+        except Exception as e:  # noqa: BLE001 - o ping existe pra reportar falha
+            logger.error("  falhou: {}", e)
+            failed = True
+            continue
+        print(f"[{name}] {reply}")
+    if LLM.text_model == LLM.vision_model:
+        logger.warning(
+            "TEXT_MODEL não está configurado — decisões de combate e escolha vão "
+            "pro VLM. São chamadas de texto puro; um modelo de raciocínio dedicado "
+            "tende a jogar melhor. Ver .env.example."
+        )
+    return 1 if failed else 0
+
+
+def _ask_model(model: str, prompt: str) -> str:
+    resp = _get_client().chat.completions.create(
+        model=model, messages=[{"role": "user", "content": prompt}]
+    )
+    return resp.choices[0].message.content or ""
 
 
 def main() -> int:

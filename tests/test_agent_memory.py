@@ -50,3 +50,63 @@ def test_memory_block_includes_summary(tmp_path: Path) -> None:
     block = _memory_block(mem)
     assert "Resumo:" in block
     assert "resumo: jogador subiu 1 nível" in block
+
+
+def test_hp_alto_nao_gera_alerta():
+    from src.agent import _hp_line
+    from src.perception import HandScan
+
+    assert _hp_line(HandScan(cards=[], cursor_idx=0, hp=(61, 61))) == "HP: 61/61"
+
+
+def test_hp_baixo_avisa_o_modelo():
+    """Sem o aviso, o modelo escolhe dano por padrão mesmo à beira da morte."""
+    from src.agent import _hp_line
+    from src.perception import HandScan
+
+    linha = _hp_line(HandScan(cards=[], cursor_idx=0, hp=(18, 61)))
+    assert "18/61" in linha
+    assert "armadura" in linha
+
+
+def test_hp_desconhecido_nao_polui_o_prompt():
+    from src.agent import _hp_line
+    from src.perception import HandScan
+
+    assert _hp_line(HandScan(cards=[], cursor_idx=0)) == ""
+
+
+def _scan(**kw):
+    from src.perception import HandScan
+    from src.schemas import CardScanFrame
+
+    base = {
+        "cards": [CardScanFrame(nome="Otto", mana=2, descricao="Cause 374.", tipo="ataque")],
+        "cursor_idx": 0,
+        "mana": 3,
+    }
+    return HandScan(**{**base, **kw})
+
+
+def test_prompt_de_combate_carrega_mana_e_mao():
+    from src.agent import _combat_prompt
+
+    prompt = _combat_prompt(_scan(), None, None)
+    assert "MANA DISPONÍVEL: 3" in prompt
+    assert "Otto" in prompt
+    assert '"indice": 0' in prompt
+
+
+def test_prompt_de_combate_carrega_o_hp():
+    """O HP era calculado mas não chegava ao prompt — testar a função isolada não pegava."""
+    from src.agent import _combat_prompt
+
+    assert "HP: 18/61" in _combat_prompt(_scan(hp=(18, 61)), None, None)
+
+
+def test_prompt_de_combate_repassa_a_recusa():
+    from src.agent import _combat_prompt
+
+    prompt = _combat_prompt(_scan(), None, "a carta custa 2 e você tem 1")
+    assert "rejeitada" in prompt
+    assert "custa 2" in prompt
