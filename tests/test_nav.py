@@ -149,3 +149,59 @@ def test_fim_de_fase_nao_devolve_none(monkeypatch):
     minimap = read_minimap(load(REFERENCE))
     fim = dataclasses.replace(minimap, fog=np.zeros_like(minimap.fog))
     assert plan(fim) is not None
+
+
+def test_bonus_ficam_colados_na_borda_da_sala():
+    """A observação que motivou o recurso: itens não ficam no centro do bloco.
+
+    `jogo.md`: "as vezes eles ficam colado a paredes, então não são só blocos".
+    Medido: todos a 0-3px da borda do piso.
+    """
+    import cv2
+    import numpy as np
+
+    from src.vision.minimap import find_bonuses, read_minimap
+
+    minimap = read_minimap(load(REFERENCE))
+    bonuses = find_bonuses(minimap)
+    assert bonuses, "o frame de referência tem pontos de bônus visíveis"
+
+    piso = minimap.walkable.astype(np.uint8)
+    borda = cv2.dilate(piso, np.ones((3, 3), np.uint8)) - cv2.erode(
+        piso, np.ones((3, 3), np.uint8)
+    )
+    ys, xs = np.nonzero(borda)
+    for bx, by in bonuses:
+        dist = np.sqrt(((xs - bx) ** 2 + (ys - by) ** 2).min())
+        assert dist <= 4, f"bônus em ({bx},{by}) está a {dist:.0f}px da borda"
+
+
+def test_bonus_estao_sobre_o_piso():
+    """Textura do pergaminho fora da sala cai no mesmo tom e precisa ser excluída."""
+    from src.vision.minimap import find_bonuses, read_minimap
+
+    minimap = read_minimap(load(REFERENCE))
+    for bx, by in find_bonuses(minimap):
+        assert minimap.walkable[by, bx]
+
+
+def test_bonus_nao_sao_confundidos_com_inimigos():
+    """Caveira mede 13px; bônus, 4-6px. Os filtros de tamanho não se sobrepõem."""
+    from src.vision.icons import find_icons
+    from src.vision.minimap import find_bonuses, read_minimap
+
+    minimap = read_minimap(load(REFERENCE))
+    icones = {(i.x, i.y) for i in find_icons(minimap.gray, minimap.arrow_side)}
+    for bx, by in find_bonuses(minimap):
+        assert all(abs(bx - ix) > 8 or abs(by - iy) > 8 for ix, iy in icones)
+
+
+def test_bonus_nao_viram_alvo_de_navegacao():
+    """jogo.md classifica bônus como "totalmente ignorável, apenas pegue caso
+    estejam no caminho". Pegá-los exige virar pra parede e andar, manobra que a
+    navegação por células não faz — e agir com falso positivo faria o agente
+    andar contra parede até o antitravamento disparar."""
+    minimap = read_minimap(load(REFERENCE))
+    step = plan(minimap)
+    assert step is not None
+    assert "bônus" not in step.reason

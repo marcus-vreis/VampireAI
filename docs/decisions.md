@@ -869,3 +869,27 @@ expôs a ADR-063.
 **Coberto:** que o contador de falhas **zera a cada passo bem-sucedido** (uma
 falha isolada não pode somar com outra dez minutos depois), e que
 `gamepad.reset()` roda mesmo quando o loop aborta.
+
+## ADR-065: Bônus detectados na borda do bloco, sem agir ainda (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `minimap.find_bonuses` localiza os pontos de bônus e o overlay de
+debug os marca. `nav.plan` **não** os usa como alvo.
+**Motivo — confirma a observação original do projeto:** `jogo.md` diz que "as
+vezes eles ficam colado a paredes, então não são só blocos". Medido: os candidatos
+sobre o piso ficam a **0-3px da borda da sala**, não no centro da célula. O
+overlay mostra os losangos exatamente em cima das bordas.
+**Assinatura:** manchas de 4-6px no tom de ícone (cinza 136), sobre o piso e a até
+4px da borda. Os filtros de tamanho não se sobrepõem aos da caveira (13px).
+**Por que não agir ainda — decisão deliberada:**
+1. `jogo.md` classifica bônus como "totalmente ignorável, apenas pegue caso
+   estejam no caminho". O ganho é pequeno por construção.
+2. Pegá-los exige uma manobra que a navegação por células não faz: virar pra
+   **parede** e andar. O alvo não é andável, então o BFS não chega nele.
+3. A taxa de falso positivo não foi medida contra conjunto rotulado — a textura
+   do pergaminho cai no mesmo tom. Um falso positivo ao lado do jogador faria o
+   agente andar contra parede até o antitravamento disparar, gastando três
+   empurrões por nada.
+**O passo que torna isso mensurável** é a sessão de rotulagem: com o overlay
+marcando os candidatos, dá pra conferir quantos são bônus de verdade antes de
+escrever comportamento em cima deles. Detectar primeiro, agir quando houver
+número.

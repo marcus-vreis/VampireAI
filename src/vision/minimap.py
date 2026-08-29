@@ -244,6 +244,56 @@ def relative_turn(current: Facing, want: Facing) -> Turn:
     return [Turn.FORWARD, Turn.RIGHT, Turn.BACK, Turn.LEFT][diff]
 
 
+# Bônus no minimapa: manchas pequenas no tom de ícone, sobre o piso e coladas na
+# borda da sala. Medido no frame de referência: 4-6px de lado, a 0-3px da borda.
+_BONUS_MIN_SIDE, _BONUS_MAX_SIDE = 3, 12
+_BONUS_MIN_AREA = 12
+_BONUS_MAX_EDGE_DIST = 4
+
+
+def find_bonuses(mm: Minimap) -> list[tuple[int, int]]:
+    """Pontos de bônus, que o jogo desenha COLADOS na parede do bloco.
+
+    Não ficam no centro da célula: `jogo.md` descreve que "as vezes eles ficam
+    colado a paredes", e a medição confirma — todos a 0-3px da borda da sala.
+    Pegá-los exige virar pra parede e andar, manobra que a navegação por células
+    não faz.
+
+    Devolve as posições; **nada age sobre elas ainda**. `jogo.md` classifica bônus
+    como "totalmente ignorável, apenas pegue caso estejam no caminho", e a taxa
+    de falso positivo (textura do pergaminho no mesmo tom) ainda não foi medida
+    contra um conjunto rotulado. Expor no overlay de debug é o passo que torna
+    isso mensurável.
+    """
+    tone = cv2.inRange(mm.gray, _ICON_LO, _ICON_HI)
+    floor = mm.walkable.astype(np.uint8)
+    near_floor = cv2.dilate(floor, np.ones((5, 5), np.uint8))
+    edge = cv2.dilate(floor, np.ones((3, 3), np.uint8)) - cv2.erode(
+        floor, np.ones((3, 3), np.uint8)
+    )
+    ys_edge, xs_edge = np.nonzero(edge)
+    if len(xs_edge) == 0:
+        return []
+
+    total, _, stats, centroids = cv2.connectedComponentsWithStats(
+        tone & (near_floor * 255), 8
+    )
+    found: list[tuple[int, int]] = []
+    for i in range(1, total):
+        x, y, w, h, area = (int(v) for v in stats[i])
+        if not (_BONUS_MIN_SIDE <= w <= _BONUS_MAX_SIDE and _BONUS_MIN_SIDE <= h <= _BONUS_MAX_SIDE):
+            continue
+        if area < _BONUS_MIN_AREA:
+            continue
+        cx, cy = int(centroids[i][0]), int(centroids[i][1])
+        if not mm.walkable[cy, cx]:
+            continue  # textura do pergaminho fora da sala
+        dist = np.sqrt(((xs_edge - cx) ** 2 + (ys_edge - cy) ** 2).min())
+        if dist <= _BONUS_MAX_EDGE_DIST:
+            found.append((cx, cy))
+    return found
+
+
 def reachable(mm: Minimap) -> np.ndarray:
     """Piso ligado ao jogador. O minimapa mostra salas ainda sem corredor aberto.
 
