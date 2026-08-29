@@ -38,7 +38,10 @@ _PARCHMENT_MAP = 0.50
 _SLATE_DIALOG = 0.45
 # A tela "Baralho" mostra o deck inteiro num painel de tamanho intermediário.
 # Medido: combate fica em 0.017-0.052, baralho em 0.181, diálogo em 0.56-0.63.
-# ATENÇÃO: baseado em UMA observação ao vivo. Confirmar com mais amostras.
+# O limiar sozinho não bastava: o menu principal fica em 0.104 e era classificado
+# como baralho. O que separa não é ajuste de número, é uma regra do jogo — só dá
+# pra abrir o baralho DENTRO de uma run, então o HUD (coração e orbe) tem que
+# estar presente. Ver ADR-049.
 _SLATE_DECK = 0.10
 _HUD_PRESENT = 0.02
 
@@ -114,9 +117,11 @@ def signature(frame: np.ndarray) -> ScreenSignature:
 def _verdict(parchment: float, slate: float, cards: int, hud: bool) -> Verdict:
     if slate >= _SLATE_DIALOG:
         return Verdict.DIALOG
-    if slate >= _SLATE_DECK:
+    if slate >= _SLATE_DECK and hud:
         # As cartas do deck também têm círculo de custo, então sem esta checagem
         # a tela "Baralho" passava por combate e o agente tentava jogar carta ali.
+        # O HUD é o que a separa do menu principal, que tem painel de tamanho
+        # parecido mas acontece FORA de uma run.
         return Verdict.DECK
     if parchment >= _PARCHMENT_MAP:
         return Verdict.MAP

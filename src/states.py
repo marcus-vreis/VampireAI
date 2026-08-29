@@ -58,6 +58,7 @@ _OTHER_STATES = {
     GameState.GAME_OVER,
     GameState.STAGE_COMPLETE,
     GameState.GAME_COMPLETE,
+    GameState.NOTICE,
 }
 
 

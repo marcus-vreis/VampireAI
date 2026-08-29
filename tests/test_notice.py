@@ -25,3 +25,20 @@ def test_handler_confirma_o_aviso():
 
 def test_notice_tem_handler_registrado():
     assert agent._HANDLERS[states.GameState.NOTICE] is agent.handle_notice
+
+
+def test_notice_tambem_e_saida_do_prompt_de_telas_diversas():
+    """Aqui a lista fechada era mais perigosa: forçar uma tela desconhecida em
+    `game_over` mata a run, porque `handle_game_over` levanta SystemExit."""
+    assert states.GameState.NOTICE in states._OTHER_STATES
+    prompt = (PATHS.prompts / "detect_other.txt").read_text(encoding="utf-8")
+    assert '"notice"' in prompt
+    assert "NÃO chute" in prompt
+
+
+def test_game_over_encerra_a_run():
+    """Confirma o motivo de o prompt ser conservador com game_over."""
+    import pytest
+
+    with pytest.raises(SystemExit):
+        agent.handle_game_over(None)

@@ -581,3 +581,28 @@ chegaria a `combat.validate`, que compara `custo > mana` — e `-1` passa em
 qualquer comparação, aprovando a carta como se sempre coubesse.
 **Princípio:** saída de modelo que viola uma regra conhecida do jogo deve virar
 "não sei", não ser propagada. `None` já tem tratamento em todo o caminho.
+
+## ADR-049: `deck` exige HUD presente (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o veredito `DECK` passa a exigir `hud=True` além do painel ardósia.
+**Motivo — regressão que eu mesmo introduzi:** o limiar da ADR-037 repousava sobre
+uma única observação, e eu registrei isso como risco. O risco se materializou: o
+**menu principal** fica em 0.104 de ardósia, acima do corte de 0.10, e passou a ser
+classificado como baralho. O agente apertaria quadrado no menu principal.
+**Por que HUD e não um limiar mais alto:** ajustar o número seria empurrar o
+problema (0.104 e 0.181 não são uma separação confortável com uma amostra de cada).
+O HUD é uma **regra do jogo**: só dá pra abrir o baralho dentro de uma run, e o
+menu principal acontece fora. Coração e orbe presentes separam os dois por
+construção, não por calibração.
+**Encontrado assim:** procurando frames que caíssem em `detect_other` pra testar
+aquele prompt. Deram zero — e zero era o sintoma, não o resultado.
+
+## ADR-050: Saída de emergência também em `detect_other` (2026-08-29)
+**Decisão:** `detect_other.txt` ganha `"notice"` e uma instrução explícita de não
+chutar `game_over`.
+**Motivo:** mesma falha de desenho da ADR-046, com consequência pior. As cinco
+opções eram title / menu / game_over / stage_complete / game_complete, e
+`handle_game_over` levanta `SystemExit`. Uma tela desconhecida forçada em
+`game_over` **mata uma run que estava indo bem**.
+**Assimetria deliberada no prompt:** errar pro lado de `notice` custa um X apertado
+à toa; errar pro lado de `game_over` custa a partida. O prompt diz isso.
