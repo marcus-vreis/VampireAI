@@ -17,6 +17,7 @@ def sem_espera():
     with (
         mock.patch.object(agent.time, "sleep"),
         mock.patch.object(agent, "gamepad") as pad,
+        mock.patch.object(agent, "preflight", return_value=True),
         mock.patch.object(agent, "default_memory") as mem,
     ):
         mem.return_value = mock.MagicMock()

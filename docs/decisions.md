@@ -978,3 +978,24 @@ quer saber o que houve antes.
 
 Ambas trazem a explicação junto quando são diferentes de zero, pra não exigir que
 quem lê saiba interpretar.
+
+## ADR-070: Verificação de pré-voo antes da run (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent.preflight` confere janela e modelo, mostra o que achou, e faz
+uma contagem de 5s antes de começar. Reprovar impede o loop de dar um passo.
+**Motivo — dois atritos de partida que a primeira run encontraria:**
+1. **Ollama fora do ar só aparecia na primeira decisão**, depois de três
+   tentativas com backoff. Vários minutos até a causa ficar visível, e ela apareceria
+   como falha de turno em vez de "o servidor não está rodando".
+2. **O agente esperava 0.5s pra começar.** Esse `boot_delay_s` existe pro driver
+   do gamepad inicializar, não pra uma pessoa alternar do terminal pro jogo — as
+   CLIs sempre tiveram contagem de 3s, o agente não tinha nenhuma. O primeiro
+   passo já caía na espera por foco (ADR-063).
+**O que reporta, verificado ao vivo:**
+
+    Janela: 1280x720 em (320, 191)
+    Modelo respondendo: qwen2.5vl:7b (visão) / qwen2.5vl:7b (texto)
+    Começando em 5s — traga a janela do JOGO pra frente...
+
+A linha do modelo mostra os dois nomes: quem configurou `TEXT_MODEL` confirma que
+pegou, e quem não configurou vê os dois iguais e entende por quê (ADR-031).

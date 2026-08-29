@@ -23,7 +23,7 @@ from loguru import logger
 from src import gamepad, input_exec
 from src.capture import grab
 from src.combat import Rejection, fallback_index, validate
-from src.config import GAMEPAD, PATHS
+from src.config import LLM, PATHS
 from src.llm import ModelUnavailableError, ask_vlm
 from src.memory import Memory, default_memory
 from src.nav import plan
@@ -65,6 +65,11 @@ _MAX_ILLEGAL_RETRIES = 2
 # Abortar a run por isso seria desproporcional — esperamos o jogo voltar.
 _MAX_FOCUS_WAITS = 30
 _FOCUS_WAIT_S = 2.0
+# Tempo pra sair do terminal e focar o jogo. O `boot_delay_s` do gamepad (0.5s)
+# serve pro driver inicializar, não pra uma pessoa alternar de janela.
+_COUNTDOWN_S = 5
+# Meia-volta são dois giros; o jogo precisa processar o primeiro.
+_BETWEEN_TURNS_S = 0.25
 
 
 def _memory_block(memory: Memory | None) -> str:
@@ -327,7 +332,7 @@ def handle_map(memory: Memory | None = None) -> None:
     )
     if step.turn is Turn.BACK:
         input_exec.turn_right()
-        time.sleep(GAMEPAD.between_actions_s)
+        time.sleep(_BETWEEN_TURNS_S)
         input_exec.turn_right()
         return
     _TURN_ACTION[step.turn]()
@@ -541,10 +546,37 @@ def _step(
     return perceived.state
 
 
+def preflight(countdown_s: int = _COUNTDOWN_S) -> bool:
+    """Confere o que a run precisa, antes de gastar tempo descobrindo no meio.
+
+    Sem isto, Ollama fora do ar só aparecia na primeira decisão, depois de três
+    tentativas com backoff — vários minutos até a causa ficar visível. E o agente
+    esperava 0.5s pra começar, tempo insuficiente pra alternar do terminal pro
+    jogo, então o primeiro passo já caía na espera por foco.
+    """
+    janela = find_game_window()
+    if janela.source != "win32":
+        logger.error("Janela do Vampire Crawlers não encontrada. O jogo está aberto?")
+        return False
+    logger.info("Janela: {}x{} em ({}, {})", janela.rect.w, janela.rect.h, janela.rect.x, janela.rect.y)
+
+    try:
+        ask_vlm(None, "responda: ok")
+    except Exception as e:  # noqa: BLE001 - o pré-voo existe pra reportar
+        logger.error("Modelo não respondeu ({}). `ollama serve` está rodando?", e)
+        return False
+    logger.info("Modelo respondendo: {} (visão) / {} (texto)", LLM.vision_model, LLM.text_model)
+
+    for restante in range(countdown_s, 0, -1):
+        logger.info("Começando em {}s — traga a janela do JOGO pra frente...", restante)
+        time.sleep(1)
+    return True
+
+
 def loop(max_iters: int | None = None) -> int:
     PATHS.ensure()
-    logger.info("Agente iniciado. Foque a janela do jogo.")
-    time.sleep(GAMEPAD.boot_delay_s)
+    if not preflight():
+        return 2
 
     memory = default_memory(summarize_fn=_summarize_via_vlm)
     memory.append("agente iniciado", state="boot")

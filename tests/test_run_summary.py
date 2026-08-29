@@ -53,6 +53,7 @@ def test_imprime_mesmo_abortando(capsys):
     with (
         mock.patch.object(agent.time, "sleep"),
         mock.patch.object(agent, "gamepad"),
+        mock.patch.object(agent, "preflight", return_value=True),
         mock.patch.object(agent, "default_memory", return_value=mock.MagicMock()),
         mock.patch.object(agent, "_step", side_effect=NotTheGameError("x")),
     ):
@@ -64,6 +65,7 @@ def test_conta_passos_e_estados_no_loop(capsys):
     with (
         mock.patch.object(agent.time, "sleep"),
         mock.patch.object(agent, "gamepad"),
+        mock.patch.object(agent, "preflight", return_value=True),
         mock.patch.object(agent, "default_memory", return_value=mock.MagicMock()),
         mock.patch.object(agent, "_step", return_value=GameState.MAP),
     ):
