@@ -2,6 +2,12 @@
 
 Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 
+**As ADRs não são apagadas quando mudam de ideia** — o histórico do raciocínio
+vale. Mas uma decisão superada precisa dizer isso na própria entrada, senão quem
+lê de cima pra baixo implementa o que já foi abandonado. Procure a marca:
+
+> ⚠️ **SUPERADA por ADR-NNN** — o que vale hoje está lá.
+
 ## ADR-001: VLM local em vez de API
 **Data:** 2026-05
 **Decisão:** Qwen2.5-VL 7B via Ollama.
@@ -13,6 +19,8 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Motivo:** portabilidade. Trocar pra Claude/GPT é só mudar `base_url`.
 
 ## ADR-003: OCR híbrido para números pequenos
+> ⚠️ **SUPERADA por ADR-033.** A ordem hoje é glifo aprendido → Tesseract →
+> modelo, e o Tesseract deixou de ser necessário.
 **Decisão:** pytesseract antes de VLM para HP/mana globais.
 **Motivo:** VLM falha em números pequenos sobre sprites; OCR upscale 4× + threshold é mais previsível.
 
@@ -33,10 +41,14 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Motivo:** clone novo roda sem copiar `.env` na mão.
 
 ## ADR-009: Detecção de estado via VLM
+> ⚠️ **SUPERADA por ADR-022.** A detecção é por assinatura de CV; o modelo só
+> desempata as telas raras.
 **Decisão:** prompt curto de múltipla escolha, sem heurística de pixel ainda.
 **Motivo:** validar caminho ponta-a-ponta antes de otimizar.
 
 ## ADR-010: OCR vence VLM em divergência
+> ⚠️ **OBSOLETA.** `_reconcile_combat` não existe mais. O combate não usa VLM
+> pra ler números: mana e HP vêm de `vision/hud.py` (ADR-033).
 **Decisão:** `_reconcile_combat` sobrescreve VLM quando OCR diverge.
 **Motivo:** dígitos pequenos confundem VLM (8↔3, 5↔6).
 
@@ -55,24 +67,34 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Substitui:** ADR-011 (coords TBD), ADR-013 (slots calculados em runtime). Ambos obsoletos.
 
 ## ADR-015: Scan sequencial de cartas em combate
+> ⚠️ **SUPERADA por ADR-024.** A travessia não recebe mais `total_cartas` — ela
+> descobre o tamanho da mão sozinha, porque a carta selecionada cobre o círculo
+> de custo da vizinha e a contagem num frame só subestima.
 **Data:** 2026-05-02
 **Decisão:** ao entrar em combate, perceber `total_cartas` no frame inicial; depois pipeline `[capture → ← → capture → ← → ...]` capturando UM print por carta destacada. Cada print classificado por `card_scan.txt` (prompt curtíssimo).
 **Motivo:** carta destacada ocupa muito espaço no frame → VLM lê com alta confiança. Reduz problema de "ler 4-8 cartas pequenas e sobrepostas" a "ler 1 carta grande, N vezes".
 **Trade-off:** N chamadas VLM por turno (latência ~3s × N ≈ 12-20s pra 4-7 cartas). Aceitável dentro do alvo de <15s/turno se modelo já estiver carregado.
 
 ## ADR-016: Uma ação por chamada (combate e mapa)
+> ℹ️ **Ainda vale, com uma ressalva da ADR-043:** a mão conhecida é reaproveitada
+> entre jogadas do mesmo turno. A decisão continua sendo uma por vez e cada passo
+> recaptura — o que se dispensa é refazer a travessia, não a percepção.
 **Data:** 2026-05-02
 **Decisão:** modelo decide só a PRÓXIMA ação. Executa, recaptura, decide de novo. Não constrói pipeline pré-computada.
 **Motivo:** robusto a estado inesperado (animações, buffs/debuffs, level up no meio do combate). Erros não acumulam — auto-correção a cada step.
 **Trade-off:** mais chamadas VLM por turno. Mitigado por `card_scan` cachear o conhecimento da mão (decisão usa scan + estado, não recapta tudo).
 
 ## ADR-017: Mapa via pergunta mínima de direção
+> ⚠️ **APOSENTADA por ADR-022** (ver nota completa mais abaixo). A direção sai
+> de um BFS sobre o minimapa; o modelo não é consultado no mapa.
 **Data:** 2026-05-02
 **Decisão:** prompt do `map.txt` reduz percepção a "alvo está em qual direção relativa: frente/esquerda/direita/atrás/no_alvo?". Sem contar paredes, sem ler mini-mapa em detalhe.
 **Motivo:** pergunta mais fácil que VLM consegue responder. Custo de N steps por nó (4-8 × ~3s = 15-40s) é aceitável porque mapa não é caminho crítico de latência.
 **Trade-off:** lento. Aceitável; mapa entre combates não bate o orçamento de <15s do combate.
 
 ## ADR-019: Consenso multi-amostra para contagem de cartas
+> ⚠️ **APOSENTADA por ADR-022 e ADR-024** (ver nota completa mais abaixo). Era
+> curativo sobre um recorte errado.
 **Data:** 2026-05-03
 **Decisão:** `_perceive_combat` chama o prompt de contagem K vezes (default `PERCEPTION_COUNT_SAMPLES=3`) sobre o mesmo crop e tira o **mode** do total + idx. Pré-processamento PIL (`ImageEnhance.Contrast/Color/Sharpness`) aplicado ao crop antes da chamada. Mesmo realce reaproveitado em `scan_combat_hand` para os cards individuais.
 **Motivo:** Qwen2.5-VL 7B oscila ±1 na contagem de bolinhas pequenas em leques sobrepostos; saturação/contraste destacam cyan das bolinhas; voto majoritário cancela ruído residual.
