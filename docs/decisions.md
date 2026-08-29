@@ -893,3 +893,18 @@ overlay mostra os losangos exatamente em cima das bordas.
 marcando os candidatos, dá pra conferir quantos são bônus de verdade antes de
 escrever comportamento em cima deles. Detectar primeiro, agir quando houver
 número.
+
+## ADR-066: As CLIs que emitem input avisam sobre o foco (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `window.warn_if_unfocused` avisa quando o jogo não está em primeiro
+plano. Chamado por `src.input_exec --action` e `src.perception --scan-hand`,
+depois da contagem regressiva.
+**Motivo:** a ADR-052 fez o **agente** recusar agir sem foco, mas as ferramentas
+de linha de comando ficaram de fora — e elas emitem input de verdade.
+`--scan-hand` aperta ← várias vezes; `--action confirm` aperta X. A contagem
+regressiva delas **pede** pra focar o jogo, mas pedir não é conferir. É a mesma
+classe do bug do replay: a precondição existia de fato e não estava escrita em
+todos os lugares que precisavam dela.
+**Avisa em vez de bloquear, deliberadamente:** quem roda uma CLI dessas está
+depurando de propósito e às vezes quer ver o efeito noutro lugar. No agente, que
+roda sozinho por minutos, bloquear é certo; numa ferramenta manual, avisar basta.

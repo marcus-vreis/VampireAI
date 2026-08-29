@@ -52,3 +52,28 @@ def test_o_erro_de_foco_e_um_caso_de_nao_e_o_jogo():
     from src.states import NotTheGameError
 
     assert issubclass(GameNotFocusedError, NotTheGameError)
+
+
+def test_cli_avisa_quando_o_jogo_nao_esta_focado():
+    """As CLIs emitem input de verdade. A contagem regressiva delas PEDE pra
+    focar o jogo, mas pedir não é conferir."""
+    from src import window
+
+    with mock.patch.object(window, "find_game_window", return_value=janela(False)):
+        assert window.warn_if_unfocused() is False
+
+
+def test_cli_nao_avisa_com_o_jogo_focado():
+    from src import window
+
+    with mock.patch.object(window, "find_game_window", return_value=janela(True)):
+        assert window.warn_if_unfocused() is True
+
+
+def test_cli_avisa_mas_nao_bloqueia():
+    """Quem roda uma CLI dessas está depurando de propósito, e às vezes quer ver
+    o efeito noutro lugar. Avisar basta; bloquear atrapalharia."""
+    from src import window
+
+    with mock.patch.object(window, "find_game_window", return_value=janela(False)):
+        window.warn_if_unfocused()  # não levanta

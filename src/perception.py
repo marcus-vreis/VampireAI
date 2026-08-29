@@ -38,6 +38,7 @@ from src.vision.cards import (
 )
 from src.vision.digits import GlyphBook
 from src.vision.hud import HEART_BOX, ORB_BOX, heart_rows, orb_glyphs, read_hp, read_mana
+from src.window import warn_if_unfocused
 
 # Duas leituras do cursor a menos de 12px são a mesma carta.
 _SAME_CARD_PX = 12
@@ -432,6 +433,8 @@ def main() -> int:
     for s in range(args.countdown, 0, -1):
         logger.info("Capturando em {}s — foque o jogo (combate)...", s)
         time.sleep(1)
+
+    warn_if_unfocused()
 
     scan = scan_combat_hand(default_carddb(), default_glyphbook())
     print(json.dumps(scan.model_dump(), indent=2, ensure_ascii=False))

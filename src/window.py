@@ -88,6 +88,28 @@ def find_game_window(title_substring: str = _TITLE_SUBSTRING) -> WindowLookup:
     return WindowLookup(rect=WINDOW, source="config")
 
 
+def warn_if_unfocused() -> bool:
+    """Avisa quando o jogo não está em primeiro plano. Devolve se está.
+
+    Para as ferramentas de linha de comando que emitem input de verdade. O
+    agente já recusa agir sem foco (ADR-052), mas as CLIs não tinham essa
+    proteção: `--scan-hand` aperta ← contra qualquer janela que estiver focada,
+    e `--action confirm` aperta X. A contagem regressiva delas pede pra focar o
+    jogo, mas pedir não é conferir.
+
+    Avisa em vez de bloquear: quem roda uma CLI dessas está depurando de
+    propósito, e às vezes quer ver o efeito noutro lugar.
+    """
+    found = find_game_window()
+    if found.foreground:
+        return True
+    logger.warning(
+        "O jogo NÃO está em primeiro plano. O input vai pra janela que estiver "
+        "focada, não pro Vampire Crawlers."
+    )
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Localiza a janela do jogo.")
     parser.add_argument("--title", default=_TITLE_SUBSTRING)

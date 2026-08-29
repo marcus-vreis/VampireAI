@@ -13,6 +13,7 @@ from loguru import logger
 
 from src import gamepad
 from src.config import GAMEPAD
+from src.window import warn_if_unfocused
 
 
 def navigate_horizontal(steps: int) -> None:
@@ -75,6 +76,8 @@ def main() -> int:
     for s in range(args.countdown, 0, -1):
         logger.info("Executando {} em {}s — foque o jogo agora...", args.action, s)
         time.sleep(1)
+
+    warn_if_unfocused()
 
     {
         "confirm": confirm,
