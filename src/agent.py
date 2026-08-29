@@ -297,15 +297,25 @@ def _decide_choice(
 def _choose_and_confirm(
     opcoes: list, cur: int | None, contexto: str, memory: Memory | None
 ) -> None:
-    """Pede a escolha ao modelo, prende ao intervalo válido e navega até ela."""
+    """Pede a escolha ao modelo, prende ao intervalo válido e navega até ela.
+
+    Sem saber onde o cursor está, NÃO navega. O palpite anterior era "está na
+    opção mais à direita", herdado da mão de combate — mas nas telas de escolha a
+    selecionada é a que sobe, e medida em três frames reais ela estava no índice
+    0. Um fallback não serve aos dois, e errar aqui escolhe a recompensa errada
+    pro resto da run. Retornar sem agir faz o passo seguinte recapturar; se o
+    cursor seguir ilegível, o antitravamento aperta X e leva a opção em destaque.
+    """
+    if cur is None:
+        logger.warning("{}: cursor ilegível — recapturando em vez de chutar", contexto)
+        return
     choice = _decide_choice(json.dumps(opcoes, ensure_ascii=False), contexto, memory)
     target = max(0, min(choice.indice_alvo, len(opcoes) - 1))
     if target != choice.indice_alvo:
         logger.warning("Índice {} fora de 0..{} — usando {}", choice.indice_alvo, len(opcoes) - 1, target)
-    cursor = cur if cur is not None else len(opcoes) - 1
     logger.info("{}: escolhe idx={} ({})", contexto, target, choice.motivo)
     _remember(memory, f"{contexto}: idx={target} ({choice.motivo})", contexto)
-    input_exec.select_and_confirm(target - cursor)
+    input_exec.select_and_confirm(target - cur)
 
 
 def handle_level_up(memory: Memory | None = None) -> None:

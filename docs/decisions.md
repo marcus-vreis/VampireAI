@@ -820,3 +820,29 @@ de tela inteira assume — que é o caminho certo pra "vazio" e "evolucao".
 **Padrão que se repete:** três das últimas correções foram regressões introduzidas
 por mim em rodadas anteriores desta mesma sessão. Refatoração larga sem teste no
 caminho de saída é onde elas nascem.
+
+## ADR-061: Sem cursor conhecido, não navegar (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `_choose_and_confirm` retorna sem agir quando `indice_selecionada` é
+None, em vez de assumir uma posição.
+**Motivo:** o fallback era `cursor = len(opcoes) - 1` — "está na opção mais à
+direita". Isso vem da mão de combate, onde o cursor de fato começa na ponta
+direita. Mas nas telas de escolha a selecionada é **a que sobe**, e medida em três
+frames reais ela estava no **índice 0**. Um único fallback não pode servir aos
+dois, e o que estava lá errava por `n-1` passos nas telas de escolha.
+**Por que o custo é assimétrico:** errar a navegação num baú ou level up escolhe a
+recompensa errada, e essa carta fica no deck pelo resto da run. Não é um turno
+perdido, é a run inteira desviada.
+**O que acontece ao não agir:** o passo seguinte recaptura. Se o cursor seguir
+ilegível, o antitravamento aperta X e leva a opção em destaque — que é um default
+razoável, e explícito, em vez de uma navegação às cegas.
+
+## ADR-062: Handlers de escolha ganham teste (2026-08-29)
+**Decisão:** `tests/test_chest.py` e `tests/test_level_up.py` cobrem os caminhos
+de baú e level up com percepção mockada.
+**Motivo:** eram os handlers que decidem o deck da run e **nunca tinham sido
+exercitados, nem com mock**. O primeiro teste que escrevi já encontrou a ADR-060
+(baú descartando recompensa). O segundo encontrou esta ADR-061.
+**Sinal:** quando escrever o primeiro teste de um caminho acha bug na primeira
+leitura, o caminho estava sendo mantido por suposição. Os que faltam agora são
+`handle_stage_complete` e `handle_game_complete`, ambos de uma linha.

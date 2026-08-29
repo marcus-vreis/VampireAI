@@ -30,7 +30,9 @@ def test_bau_com_cartas_escolhe_em_vez_de_sacar(executor):
     "vazio" — sacava dinheiro e descartava a recompensa."""
     exec_, decide = executor
     opcoes = [{"posicao": i, "nome": f"c{i}", "e_bonus": False} for i in range(3)]
-    with mock.patch.object(agent, "perceive", return_value=percebido(opcoes=opcoes)):
+    with mock.patch.object(
+        agent, "perceive", return_value=percebido(opcoes=opcoes, indice_selecionada=0)
+    ):
         agent.handle_chest(None)
     assert decide.call_count == 1
     assert exec_.cancel.call_count == 0, "não pode sacar dinheiro havendo carta"
@@ -49,7 +51,9 @@ def test_bau_de_bonus_tambem_escolhe(executor):
     exec_, _ = executor
     opcoes = [{"posicao": 0, "nome": "b", "e_bonus": True}]
     with mock.patch.object(
-        agent, "perceive", return_value=percebido(opcoes=opcoes, tipo="bonus")
+        agent,
+        "perceive",
+        return_value=percebido(opcoes=opcoes, tipo="bonus", indice_selecionada=0),
     ):
         agent.handle_chest(None)
     assert exec_.cancel.call_count == 0
@@ -68,7 +72,21 @@ def test_indice_fora_do_intervalo_e_preso(executor):
     exec_, decide = executor
     decide.return_value = mock.Mock(indice_alvo=99, motivo="x")
     opcoes = [{"posicao": i, "nome": f"c{i}", "e_bonus": False} for i in range(2)]
-    with mock.patch.object(agent, "perceive", return_value=percebido(opcoes=opcoes)):
+    with mock.patch.object(
+        agent, "perceive", return_value=percebido(opcoes=opcoes, indice_selecionada=0)
+    ):
         agent.handle_chest(None)
     passos = exec_.select_and_confirm.call_args[0][0]
-    assert passos == 1 - 1, "índice 99 preso a 1, cursor em 1 -> zero passos"
+    assert passos == 1, "índice 99 preso a 1, cursor em 0 -> um passo"
+
+
+def test_bau_com_cursor_ilegivel_nao_chuta(executor):
+    """Escolher a recompensa errada compromete o resto da run."""
+    exec_, decide = executor
+    opcoes = [{"posicao": i, "nome": f"c{i}", "e_bonus": False} for i in range(3)]
+    with mock.patch.object(
+        agent, "perceive", return_value=percebido(opcoes=opcoes, indice_selecionada=None)
+    ):
+        agent.handle_chest(None)
+    assert exec_.select_and_confirm.call_count == 0
+    assert exec_.cancel.call_count == 0, "também não pode sacar dinheiro havendo carta"
