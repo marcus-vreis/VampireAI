@@ -108,3 +108,26 @@ def test_prompt_de_combate_avisa_sobre_custo_desconhecido():
     prompt = (PATHS.prompts / "combat_decide.txt").read_text(encoding="utf-8")
     assert "null" in prompt
     assert "custo conhecido" in prompt
+
+
+@pytest.mark.parametrize(
+    "grafia",
+    ["jogar_carta", "jogarCarta", "JOGAR_CARTA", "jogar carta", "jogar-carta"],
+)
+def test_aceita_variacao_de_grafia_da_acao(grafia: str):
+    """Observado no log: o modelo respondeu `jogarCarta`. A intenção estava certa
+    e só a grafia errada, mas a validação recusava e queimava um ciclo inteiro de
+    repergunta — que custa ~2s e conta como jogada ilegal na métrica."""
+    from src.schemas import CombatAction
+
+    assert CombatAction(acao=grafia, motivo="x").acao == "jogar_carta"
+
+
+def test_acao_desconhecida_continua_recusada():
+    """Normalizar grafia não pode virar aceitar qualquer coisa."""
+    import pydantic
+
+    from src.schemas import CombatAction
+
+    with pytest.raises(pydantic.ValidationError):
+        CombatAction(acao="descartar_mao", motivo="x")

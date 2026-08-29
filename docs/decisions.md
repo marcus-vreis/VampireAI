@@ -695,3 +695,40 @@ de ~63.580 para ~18 tokens.
 **O que sobra é o que importa:** "combate: jogou Otto — combo crescente",
 "level up: idx=0 (sinergia com o deck)". Continuidade de plano, que era o motivo
 da ADR-020 existir.
+
+## ADR-055: Variação de grafia da ação é normalizada (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `CombatAction.acao` normaliza camelCase, espaços, hífens e
+maiúsculas antes de validar contra o literal.
+**Motivo — achado no log:** das 15 falhas de `CombatAction` registradas, 14 foram
+o incidente do runner morto (ADR-045) e **1 foi o modelo respondendo
+`jogarCarta`**. A intenção estava certa e só a grafia errada, mas a validação
+recusava — queimando um ciclo de repergunta (~2s) e contando como jogada ilegal na
+métrica do bench.
+**Limite deliberado:** normalizar grafia não é aceitar qualquer coisa. Ação
+desconhecida (`descartar_mao`) continua recusada; só a forma da mesma palavra é
+tolerada.
+
+## ADR-056: Ampliar o recorte da carta NÃO melhora a leitura (resultado negativo)
+**Data:** 2026-08-29
+**Contexto:** o log mostra que **13% das leituras de carta voltam com mana
+ilegível**. Como `VLM_IMAGE_MAX_SIDE=768` só reduz imagem e um recorte de carta
+tem ~230x320, levantei a hipótese de que o dígito estava abaixo da resolução
+legível.
+**Testado:** as mesmas quatro cartas, com gabarito, lidas em 1x, 2x e 3x.
+
+| escala | tamanho enviado | mana correta |
+|---|---|---|
+| 1x | 331x266 | 4/4 |
+| 2x | 662x532 | 3/4 |
+| 3x | 993x798 (reduzido a 768) | 4/4 |
+
+**Conclusão: escala não ajuda.** O erro em 2x é ruído, não efeito de resolução — e
+os nomes variando entre execuções da mesma carta ("Tumphello" / "Tuphello" /
+"Tuhello", "Pardal" / "Pardalado" / "Pendrin") confirmam que a variação é
+estocástica.
+**Registrado como negativo de propósito:** sem isso, a hipótese seria testada de
+novo. O caminho pros 13% restantes é **outro modelo**, medível com
+`python -m src.bench`, não pré-processamento de imagem.
+**Mitigação que fica:** a segunda leitura quando o custo sai ilegível (ADR-051).
+Sendo as amostras independentes, 13% viram ~1,7%.

@@ -6,6 +6,7 @@ esquerda). Navegação concreta no gamepad é responsabilidade do executor.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -44,9 +45,26 @@ class StateDetection(BaseModel):
 # ---------- Decisão: ações do agente ----------
 
 
+def _snake(value: str) -> str:
+    """camelCase / espaços / hífens -> snake_case minúsculo."""
+    texto = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value.strip())
+    return re.sub(r"[\s\-]+", "_", texto).lower()
+
+
 class CombatAction(BaseModel):
     """Próxima ação em combate. Modelo decide UMA carta por vez ou encerra turno."""
     acao: Literal["jogar_carta", "finalizar_turno"]
+
+    @field_validator("acao", mode="before")
+    @classmethod
+    def _normaliza_acao(cls, value: object) -> object:
+        """Aceita variação de grafia do modelo.
+
+        Observado no log: ele respondeu `jogarCarta`. A intenção estava certa e só
+        a grafia errada, mas a validação recusava e queimava um ciclo inteiro de
+        repergunta — que custa ~2s e conta como jogada ilegal na métrica.
+        """
+        return _snake(value) if isinstance(value, str) else value
     indice_alvo: int | None = Field(
         default=None,
         description="Índice (0-based) da carta a jogar. Obrigatório se acao=jogar_carta.",
