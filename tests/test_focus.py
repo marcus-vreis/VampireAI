@@ -92,7 +92,7 @@ def test_tirar_o_foco_congela_o_agente():
     with (
         mock.patch.object(agent, "find_game_window", return_value=janela(False)),
         mock.patch.object(agent, "grab", side_effect=lambda *a, **k: chamadas.append(1)),
+        pytest.raises(GameNotFocusedError),
     ):
-        with pytest.raises(GameNotFocusedError):
-            agent._require_focus()
+        agent._require_focus()
     assert chamadas == [], "nem chega a capturar, quanto mais a agir"
