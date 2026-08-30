@@ -170,6 +170,14 @@ def reset() -> None:
     pad.update()
 
 
+def _avisar_sem_foco() -> None:
+    """Avisa se o input vai pra outra janela. Import tardio: `window` não faz
+    parte da camada de driver, e o resto do módulo não deve depender dele."""
+    from src.window import warn_if_unfocused
+
+    warn_if_unfocused()
+
+
 def _self_test(seconds: float = 1.0) -> None:
     """Aperta cada botão sequencialmente para validar mapeamento no jogo."""
     sequence: list[Button] = [
@@ -178,6 +186,7 @@ def _self_test(seconds: float = 1.0) -> None:
     ]
     logger.info("Self-test do gamepad — foque a janela do jogo agora.")
     time.sleep(3)
+    _avisar_sem_foco()
     for b in sequence:
         logger.info("→ {}", b.value)
         press(b)
@@ -198,6 +207,7 @@ def main() -> int:
         _self_test()
         return 0
     if args.press:
+        _avisar_sem_foco()
         press(Button(args.press))
         return 0
     parser.print_help()

@@ -117,3 +117,13 @@ def test_observacao_pula_amostra_sem_foco(capsys):
     saida = capsys.readouterr().out
     assert "sem foco" in saida
     assert "3 de 3 amostras puladas" in saida
+
+
+def test_cli_do_gamepad_avisa_antes_de_apertar():
+    """`--test` aperta nove botões em sequência. Sem checagem, vão pra janela
+    focada — que durante o desenvolvimento é o terminal ou o editor."""
+    from src import gamepad
+
+    with mock.patch("src.window.find_game_window", return_value=janela(False)) as procura:
+        gamepad._avisar_sem_foco()
+    assert procura.call_count == 1

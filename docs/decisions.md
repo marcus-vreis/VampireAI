@@ -1087,3 +1087,34 @@ frames rotulados.
 **Terceira variação do mesmo padrão nesta sessão** (replay, CLIs, watch, agora
 rotulagem): a precondição certa depende do que a ferramenta faz, e copiar a regra
 de outra sem reexaminar produz guarda errado — ou nenhum.
+
+## ADR-076: Auditoria dos pontos que capturam ou emitem input (2026-08-29)
+**Data:** 2026-08-29
+**Motivo:** quatro vezes nesta sessão uma precondição faltou em um dos lugares que
+precisava dela — replay, CLIs, `--watch`, rotulagem. Achar a quinta do mesmo jeito
+(por acidente, ao vivo) seria desperdício. Enumerei todos.
+
+**Quem captura a tela:**
+
+| ponto | guarda | por quê esse |
+|---|---|---|
+| `agent._step` e tudo abaixo dele | `_require_focus` (bloqueia) | roda sozinho por minutos; agir sem foco é silenciosamente errado |
+| `label.watch` | foco (pula a amostra) | observar sem foco produz dado inválido |
+| `label.capture_labeled` / `session` | assinatura `NOT_GAME` | o terminal PRECISA do foco pra ler tecla; foco seria guarda impossível |
+| `perception --scan-hand` | `warn_if_unfocused` | ferramenta manual: avisar basta |
+| `capture --once` | nenhum, deliberado | o pedido é "tire um print da região", seja o que for |
+| `replay` | `set_dry_run` | lê de arquivo, não da tela |
+
+**Quem emite input:**
+
+| ponto | guarda |
+|---|---|
+| `gamepad.press` | `_dry_run`, antes do driver |
+| `agent` | `_require_focus` |
+| `input_exec --action` | `warn_if_unfocused` |
+| `gamepad --test` / `--press` | `warn_if_unfocused` (fechado nesta ADR) |
+
+**A regra que a tabela mostra:** o guarda certo depende do que a ferramenta faz e
+do que ela pode exigir. Bloquear onde roda sozinho; avisar onde há alguém olhando;
+checar o conteúdo onde o foco é impossível; nada onde o pedido é literalmente
+"capture a tela".

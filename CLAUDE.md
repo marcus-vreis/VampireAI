@@ -100,6 +100,10 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
 - Nunca rodar `agent.py` sem confirmar (consome GPU pesado)
 - **Failsafe: alternar pro terminal congela o agente.** Ele não age sem o jogo em
   primeiro plano. Não remover essa checagem sem pôr outra no lugar
+- **Ao criar ponto novo que capture a tela ou emita input, consultar a tabela da
+  ADR-076.** O guarda certo depende do que a ferramenta faz: bloquear onde roda
+  sozinho, avisar onde há alguém olhando, checar o conteúdo onde o foco é
+  impossível. Copiar o guarda de outra ferramenta sem reexaminar já deu errado 4x
 - **Antes de afinar um detector de CV, olhar a máscara.** Iterar em limiar no
   escuro custa mais que renderizar o overlay e ver o que está sendo pego
 - **Medir antes de decidir.** Todo limiar deste projeto tem número que o
