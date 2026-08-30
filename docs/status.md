@@ -268,9 +268,14 @@ Saiu input real e desconectou o controle no jogo aberto. A trava agora mora em
 
 ### Depende de você jogar
 
-1. **Sessão de rotulagem** — `python -m src.label --details`. Alvo: 60-100 frames
-   cobrindo baú, chefe, game over, shop e as fases 2+. Vira suíte de regressão e
-   é o conjunto que a comparação entre modelos vai usar.
+1. **Sessão de rotulagem** — `python -m src.label --details`. **Não é o jogo
+   todo**: a meta é ~41 frames, com peso em `combat` (12) e `map` (10), e a
+   sessão mostra quanto falta a cada captura. Vira suíte de regressão e é o
+   conjunto que a comparação entre modelos vai usar.
+   As perguntas de detalhe só aparecem em combate, e são duas: quantas cartas na
+   mão, e qual está levantada contando **a partir de 1**. Quando nenhuma está
+   levantada — o cursor em "Finalizar turno", por exemplo — a resposta é `n`,
+   que é gabarito válido e diferente de Enter ("não sei"). Ver ADR-078.
 2. **Rodar no jogo** — `python -m src.agent --confirm --iters 10`. Nenhuma run
    aconteceu ainda; toda validação é sobre frames salvos e simulação. **O jogo
    precisa estar em primeiro plano** (ADR-052).

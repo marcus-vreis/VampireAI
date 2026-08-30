@@ -16,7 +16,7 @@ import collections
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import cv2
 from loguru import logger
@@ -189,7 +189,7 @@ class RunSummary:
 
     def as_record(self, motivo: str) -> dict:
         return {
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
             "minutos": round((time.monotonic() - self.inicio) / 60, 1),
             "motivo": motivo,
             "passos": self.passos,

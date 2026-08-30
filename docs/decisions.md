@@ -1147,3 +1147,34 @@ tela rara custa um passo; errar mapa/combate faz o agente rodar um scan de carta
 no mapa — que é exatamente o que os frames históricos mostram tendo acontecido.
 **O gabarito não foi feito pela CV**, o que seria circular e daria 100% sempre.
 Cada estado saiu de olhar a imagem durante esta sessão.
+
+## ADR-078: "Nenhuma selecionada" é resposta, não falta (2026-08-30)
+**Data:** 2026-08-30
+**Contexto:** a primeira sessão de `--details` travou na segunda pergunta. O
+frame era um combate com 6 cartas e **nenhuma levantada** — o cursor estava fora
+da mão. A pergunta oferecia só "um número" ou "Enter pula", então a resposta
+certa ("nenhuma") só podia ser dada como se fosse uma falta.
+**O estrago:** `cursor: null` passava a significar duas coisas incompatíveis —
+"não há carta selecionada" (gabarito válido, e o caso que `detect_card_slots`
+mais precisa acertar) e "ninguém respondeu" (sem gabarito). Uma suíte de
+regressão que confunde as duas ou pune a CV por uma pergunta não respondida, ou
+apaga do conjunto o caso mais comum de `selected_idx is None`.
+**Decisão:** separar o valor da existência da resposta. Cada campo de detalhe
+grava o par `campo` + `campo_known`. `n` responde "nenhuma"; Enter continua sendo
+"não sei". `_sabe()` lê rótulos antigos sem o par pela convenção anterior (valor
+presente = respondido), então os frames já gravados continuam valendo.
+**Três consertos de UX que vieram junto:**
+1. **Captura antes de perguntar.** Antes, as perguntas vinham primeiro e o frame
+   era capturado depois — a pessoa respondia de memória sobre uma tela que ainda
+   não tinha sido salva, e a resposta era jogada fora quando a captura era
+   recusada.
+2. **Pergunta em 1-based, dado em 0-based.** "índice do cursor, 0 = mais à
+   esquerda" é jargão de programador na hora errada: quem responde está olhando
+   o jogo, não o array. A conversão fica num lugar só.
+3. **Meta de cobertura visível.** A sessão abre e fecha dizendo quanto falta por
+   estado, porque "é pra rotular o jogo todo?" precisava ter resposta na tela.
+   Não é: são ~41 frames, com peso em `combat` e `map` — os dois que a ADR-077
+   mostrou serem os mais caros de errar.
+**O palpite da CV continua aparecendo só DEPOIS da resposta.** Mostrar antes
+faria a pessoa concordar com ele, e o gabarito passaria a medir a CV contra ela
+mesma — o mesmo vício circular que a ADR-077 evitou no conjunto de referência.

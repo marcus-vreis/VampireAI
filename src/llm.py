@@ -8,7 +8,7 @@ import io
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +140,7 @@ def ask_vlm(
 
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
                     "model": model,
                     "attempt": attempt,
@@ -167,7 +167,7 @@ def ask_vlm(
             )
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
                     "model": model,
                     "attempt": attempt,
@@ -198,7 +198,7 @@ def ask_vlm(
                 ) from e
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
                     "model": model,
                     "attempt": attempt,

@@ -1,9 +1,14 @@
 """Sessão de captura rotulada: gera o conjunto de regressão do projeto.
 
 Você joga normalmente. A cada tela interessante, aperta a tecla do estado
-correspondente; a ferramenta captura o frame, grava o rótulo e já mostra o que a
-CV teria respondido. Divergência aparece na hora, então dá pra caçar os casos
-difíceis de propósito em vez de torcer pra aparecerem.
+correspondente; a ferramenta captura o frame, grava o rótulo e só ENTÃO mostra o
+que a CV teria respondido. Divergência aparece na hora, então dá pra caçar os
+casos difíceis de propósito em vez de torcer pra aparecerem.
+
+**Não é pra rotular o jogo inteiro.** O que faz uma suíte de regressão valer é
+variedade, não volume: umas dez telas de combate diferentes valem mais que cem
+frames do mesmo turno. A meta por estado está em `_META` e a sessão mostra o
+quanto falta a cada captura — quando fecha, pode parar.
 
 A saída (`dataset/`) é versionável e vira teste automatizado — é o que permite
 dizer "contagem 98% em 60 frames" em vez de "parece melhor". É também o conjunto
@@ -17,7 +22,7 @@ import collections
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
@@ -50,6 +55,44 @@ _KEYS: dict[str, str] = {
     "e": "menu",
     "g": "game_over",
 }
+
+# Quantos frames por estado bastam. Combate e mapa levam mais porque dominam o
+# loop e porque são exatamente os dois que o caminho antigo confundia entre si
+# (ADR-077). Os estados raros levam poucos: um frame já pega a assinatura de cor.
+_META: dict[str, int] = {
+    "combat": 12,
+    "map": 10,
+    "level_up": 4,
+    "shop": 3,
+    "chest": 3,
+    "boss_chest": 2,
+    "chest_card_target": 2,
+    "stage_complete": 1,
+    "game_complete": 1,
+    "title": 1,
+    "menu": 1,
+    "game_over": 1,
+}
+
+_COMO_RESPONDER = """
+COMO RESPONDER OS DETALHES (só aparecem em combate)
+
+  cartas na mão   conte TODAS as cartas do leque, inclusive as que estão
+                  parcialmente tapadas pela vizinha da esquerda.
+
+  carta levantada a selecionada sobe acima das outras e o círculo de custo dela
+                  fica maior, pulsando entre azul e magenta. Responda contando
+                  da esquerda: 1 = a primeira. Se NENHUMA estiver levantada
+                  (acontece sempre que o cursor está em "Finalizar turno" ou
+                  "Jogar todas"), responda 'n' -- isso é uma resposta correta,
+                  não uma falta.
+
+  Enter em branco significa "não sei", e a pergunta fica sem gabarito.
+
+O palpite da CV só aparece DEPOIS que você responde, de propósito: se aparecesse
+antes você concordaria com ele, e o gabarito passaria a medir a CV contra ela
+mesma.
+"""
 
 
 def _menu() -> str:
@@ -88,12 +131,17 @@ def _append(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def capture_labeled(state: str, hand_size: int | None, cursor: int | None) -> dict | None:
-    """Captura o frame atual, move pro dataset e grava o rótulo.
+def capture_labeled(state: str) -> Path | None:
+    """Captura o frame atual e move pro dataset. None quando não é o jogo.
 
-    None quando o frame não é o jogo. **Aqui o foco não serve de guarda**: pra ler
-    a tecla, o terminal precisa estar focado, então o jogo nunca está. O que vale
-    é perguntar se o frame PARECE o jogo — e a assinatura de CV já responde isso.
+    Captura ANTES de perguntar os detalhes: quem responde precisa estar falando
+    do frame que foi realmente salvo, não do que lembra de ter visto antes de
+    digitar. Perguntar primeiro também jogaria fora a resposta quando a captura
+    é recusada.
+
+    **Aqui o foco não serve de guarda**: pra ler a tecla, o terminal precisa
+    estar focado, então o jogo nunca está. O que vale é perguntar se o frame
+    PARECE o jogo — e a assinatura de CV já responde isso.
 
     Sem esta checagem, um jogo atrás do terminal produziria um dataset inteiro de
     prints do terminal rotulados como "combate", e o gabarito que deveria medir o
@@ -111,26 +159,100 @@ def capture_labeled(state: str, hand_size: int | None, cursor: int | None) -> di
         return None
     target = DATASET_DIR / shot.name
     shot.replace(target)
+    return target
 
+
+def registrar(target: Path, state: str, detalhes: dict) -> dict:
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "file": target.name,
         "state": state,
-        "hand_size": hand_size,
-        "cursor": cursor,
+        **detalhes,
         **_observed(target),
     }
     _append(record)
     return record
 
 
-def _report(record: dict) -> None:
+def _perguntar_quantidade(prompt: str) -> tuple[int | None, bool]:
+    raw = input(prompt).strip()
+    return (int(raw), True) if raw.isdigit() else (None, False)
+
+
+def _perguntar_selecionada(prompt: str) -> tuple[int | None, bool]:
+    """Pergunta em 1-based, grava em 0-based. 'n' = nenhuma levantada.
+
+    "Nenhuma" é uma RESPOSTA, não uma falta: o cursor sai da mão sempre que o
+    jogador está sobre "Finalizar turno" ou "Jogar todas". Tratar as duas coisas
+    como o mesmo `None` apagaria do gabarito o caso mais comum de
+    `selected_idx is None` — justamente o que precisa ser medido.
+    """
+    raw = input(prompt).strip().lower()
+    if raw in ("n", "nenhuma"):
+        return None, True
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw) - 1, True
+    return None, False
+
+
+def _perguntar_detalhes() -> dict:
+    mao, mao_ok = _perguntar_quantidade("   cartas na mão? (número, Enter = não sei) ")
+    cur, cur_ok = _perguntar_selecionada(
+        "   carta levantada? (1 = primeira da esquerda, n = nenhuma, Enter = não sei) "
+    )
+    return {"hand_size": mao, "hand_size_known": mao_ok, "cursor": cur, "cursor_known": cur_ok}
+
+
+def _sabe(record: dict, campo: str) -> bool:
+    """Rótulos antigos não tinham o par `_known`: valor presente já era resposta."""
+    if f"{campo}_known" in record:
+        return bool(record[f"{campo}_known"])
+    return record.get(campo) is not None
+
+
+def _confere(record: dict, campo: str, cv: str) -> str:
+    if not _sabe(record, campo):
+        return ""
+    rotulo, obtido = record.get(campo), record.get(cv)
+    marca = "ok" if rotulo == obtido else "ERROU"
+    return f" {campo}={_mostrar(rotulo)} cv={_mostrar(obtido)} {marca}"
+
+
+def _mostrar(v: int | None) -> str:
+    return "nenhuma" if v is None else str(v)
+
+
+def _report(record: dict, feito: collections.Counter) -> None:
     agree = record["cv_verdict"] in (record["state"], "dialog")
     mark = "ok " if agree else "DIVERGE"
+    estado = record["state"]
+    meta = _META.get(estado, 0)
     logger.info(
-        "{} rotulado={} cv={} cartas={} cursor={}",
-        mark, record["state"], record["cv_verdict"], record["cv_cards"], record["cv_cursor"],
+        "{} rotulado={} cv={}{}{}  [{}/{}]",
+        mark,
+        estado,
+        record["cv_verdict"],
+        _confere(record, "hand_size", "cv_cards"),
+        _confere(record, "cursor", "cv_cursor"),
+        feito[estado],
+        meta,
     )
+
+
+def _contagem_gravada() -> collections.Counter:
+    if not LABELS_FILE.is_file():
+        return collections.Counter()
+    linhas = LABELS_FILE.read_text(encoding="utf-8").splitlines()
+    return collections.Counter(json.loads(ln)["state"] for ln in linhas if ln.strip())
+
+
+def _tabela_cobertura(feito: collections.Counter) -> str:
+    faltando = [(e, n) for e, n in _META.items() if feito.get(e, 0) < n]
+    if not faltando:
+        return "Cobertura completa. Pode parar quando quiser."
+    linhas = ["Ainda falta (você NÃO precisa rotular o jogo todo):"]
+    linhas += [f"  {e:20} {feito.get(e, 0):>2}/{n}" for e, n in faltando]
+    return "\n".join(linhas)
 
 
 def session(ask_details: bool) -> int:
@@ -146,7 +268,15 @@ def session(ask_details: bool) -> int:
             "sem isso o dataset inteiro sairia com prints do terminal."
         )
         return 2
+    if ask_details:
+        print(_COMO_RESPONDER)
+    feito = _contagem_gravada()
+    print(_tabela_cobertura(feito) + "\n")
     print(_menu())
+    return _laco(ask_details, feito)
+
+
+def _laco(ask_details: bool, feito: collections.Counter) -> int:
     total = 0
     while True:
         key = _read_key()
@@ -155,22 +285,16 @@ def session(ask_details: bool) -> int:
         state = _KEYS.get(key)
         if state is None:
             continue
-        hand_size = cursor = None
-        if ask_details and state == "combat":
-            hand_size = _ask_int("quantas cartas na mão? (enter pula) ")
-            cursor = _ask_int("índice do cursor, 0 = mais à esquerda? (enter pula) ")
-        record = capture_labeled(state, hand_size, cursor)
-        if record is None:
+        target = capture_labeled(state)
+        if target is None:
             continue
-        _report(record)
+        detalhes = _perguntar_detalhes() if ask_details and state == "combat" else {}
+        feito[state] += 1
+        _report(registrar(target, state, detalhes), feito)
         total += 1
-    print(f"\n{total} frames gravados em {DATASET_DIR}")
+    print(f"\n{total} frames gravados nesta sessão, em {DATASET_DIR}")
+    print(_tabela_cobertura(feito))
     return 0
-
-
-def _ask_int(prompt: str) -> int | None:
-    raw = input(prompt).strip()
-    return int(raw) if raw.isdigit() else None
 
 
 def watch(interval_s: float, samples: int) -> int:
@@ -226,36 +350,56 @@ def watch(interval_s: float, samples: int) -> int:
     return 0
 
 
+def _acuracia(records: list[dict], campo: str, cv: str) -> str:
+    """Concordância só entre os frames que têm gabarito daquele campo."""
+    com_rotulo = [r for r in records if _sabe(r, campo)]
+    if not com_rotulo:
+        return f"{'-':>10}"
+    ok = sum(1 for r in com_rotulo if r.get(campo) == r.get(cv))
+    return f"{ok:>3}/{len(com_rotulo):<3} {100 * ok / len(com_rotulo):>3.0f}%"
+
+
 def summary() -> int:
     if not LABELS_FILE.is_file():
         print("Nenhum rótulo ainda. Rode `python -m src.label` pra criar.")
         return 1
-    records = [json.loads(line) for line in LABELS_FILE.read_text(encoding="utf-8").splitlines()]
+    records = [
+        json.loads(ln) for ln in LABELS_FILE.read_text(encoding="utf-8").splitlines() if ln.strip()
+    ]
     by_state: dict[str, list[dict]] = {}
     for r in records:
         by_state.setdefault(r["state"], []).append(r)
 
     print(f"{len(records)} frames rotulados\n")
-    print(f"{'estado':20} {'n':>4} {'CV concorda':>12}")
+    print(f"{'estado':20} {'n':>4} {'meta':>5} {'CV concorda':>12}")
     for state, rows in sorted(by_state.items()):
         agree = sum(1 for r in rows if r["cv_verdict"] in (state, "dialog"))
-        print(f"{state:20} {len(rows):>4} {100 * agree / len(rows):>11.0f}%")
+        meta = _META.get(state, 0)
+        print(f"{state:20} {len(rows):>4} {meta:>5} {100 * agree / len(rows):>11.0f}%")
+
+    combate = by_state.get("combat", [])
+    if combate:
+        print("\nDetalhes de combate (só frames com gabarito):")
+        print(f"  cartas na mão   {_acuracia(combate, 'hand_size', 'cv_cards')}")
+        print(f"  carta levantada {_acuracia(combate, 'cursor', 'cv_cursor')}")
+    print("\n" + _tabela_cobertura(collections.Counter({k: len(v) for k, v in by_state.items()})))
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Captura rotulada pro dataset de regressão.")
+    parser.add_argument("--summary", action="store_true", help="Resume o dataset já gravado e sai.")
     parser.add_argument(
-        "--summary", action="store_true", help="Resume o dataset já gravado e sai."
-    )
-    parser.add_argument(
-        "--watch", type=int, metavar="N",
+        "--watch",
+        type=int,
+        metavar="N",
         help="Observa N amostras sem emitir input nenhum e relata o que a CV vê.",
     )
     parser.add_argument("--interval", type=float, default=3.0)
     parser.add_argument(
-        "--details", action="store_true",
-        help="Em combate, também pergunta tamanho da mão e cursor (rótulo mais rico).",
+        "--details",
+        action="store_true",
+        help="Em combate, também pergunta tamanho da mão e carta levantada.",
     )
     args = parser.parse_args()
 
