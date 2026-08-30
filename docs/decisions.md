@@ -1118,3 +1118,32 @@ precisava dela — replay, CLIs, `--watch`, rotulagem. Achar a quinta do mesmo j
 do que ela pode exigir. Bloquear onde roda sozinho; avisar onde há alguém olhando;
 checar o conteúdo onde o foco é impossível; nada onde o pedido é literalmente
 "capture a tela".
+
+## ADR-077: A tese do projeto, medida (2026-08-29)
+**Data:** 2026-08-29
+**Contexto:** a ADR-022 trocou a percepção do VLM por CV determinística com base
+numa **anedota** — "de 39 frames que são o mapa, ao menos 9 foram rotulados
+errado" — colhida de nomes de arquivo salvos pelo agente, não de medição
+controlada. A decisão central do projeto repousava sobre isso.
+**Decisão:** `src/ablation.py` põe os dois caminhos respondendo à MESMA pergunta
+sobre os MESMOS 18 frames, com gabarito conferido olhando cada imagem.
+
+| caminho | geral | só o expressável | mediana |
+|---|---|---|---|
+| CV | 18/18 (100%) | 16/16 (100%) | **5 ms** |
+| VLM aposentado | 36/54 (67%) | 36/48 (75%) | **561 ms** |
+
+**A coluna "só o expressável" existe pra ser justo:** `deck` e `not_game` foram
+descobertos DEPOIS que aquele prompt saiu de uso, então ele não tinha como
+acertá-los. Contar como erro seria trapaça. Mesmo excluindo-os, a diferença é
+**100% contra 75%, e 112x mais rápido**.
+**Achado extra:** o modelo não erra só a resposta, erra a FORMA. Devolveu
+`{"state": "combat"}`, `{"menu": "chest"}` e `{"estate": "chest"}` — chaves
+inventadas que o schema recusa. Cada uma dessas queima as três tentativas do
+retry antes de virar falha de turno.
+**O erro mais caro é o padrão, não a taxa:** o VLM confunde `map` com `combat` nos
+dois sentidos, que são justamente os dois estados que dominam o loop. Um erro em
+tela rara custa um passo; errar mapa/combate faz o agente rodar um scan de cartas
+no mapa — que é exatamente o que os frames históricos mostram tendo acontecido.
+**O gabarito não foi feito pela CV**, o que seria circular e daria 100% sempre.
+Cada estado saiu de olhar a imagem durante esta sessão.
