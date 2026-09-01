@@ -1260,3 +1260,59 @@ quebrado nesses casos passaria limpo.
 **Decisão:** `_VARIEDADE` acompanha `_META`, e a tabela imprime o que precisa
 mudar entre um frame e outro do mesmo estado. O número sozinho é meta de volume;
 o que a suíte precisa é cobertura de situação.
+
+## ADR-082: A oclusão da carta levantada é detectável num frame só (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** apontado que `read_costs` sempre erraria, porque a carta levantada
+tapa o círculo da vizinha à direita — o mesmo fato que motivou a travessia com
+print por carta. A observação está certa e o protótipo da ADR-080 só pareceu
+limpo porque o frame testado não tinha carta levantada. Sorte, não acerto.
+**O que a medição mostrou.** Vão em x entre círculos consecutivos, nos 14 frames
+de combate do `dataset/`:
+
+| situação | vão |
+|---|---|
+| logo após a carta levantada, quando há oclusão (4 casos) | 310, 321, 333, 345 |
+| **qualquer outro vão, em qualquer frame** | **≤ 146** |
+
+A separação é de 164px. Não é limiar frágil — o leque se recomprime quando uma
+carta sobe (os vãos normais caem pra 67-146), mas o buraco da oclusão fica numa
+ordem de grandeza distinta.
+**A confirmação independente:** os quatro frames `154xxx` são do **mesmo
+combate**. `154006402` tem a última levantada e mostra 6 círculos; os outros três
+têm uma do meio levantada e mostram 5. A mão é 6 nos quatro. A correção fecha os
+quatro em 6.
+**Decisão:** `CardSlots.hidden_idx` devolve a posição REAL do círculo tapado, e
+`hand_size` corrige a contagem **sem travessia**. `read_costs` passa a devolver a
+lista indexada por posição real, com `None` exatamente no índice tapado — antes
+os custos depois da levantada estariam deslocados de uma casa, o que é pior que
+faltar: um custo certo atribuído à carta errada.
+**O que NÃO foi resolvido, e está no teste.** Quando a levantada é a última
+VISÍVEL, não existe vão depois pra denunciar oclusão: o frame é idêntico entre
+"mão de 5 com a última levantada" e "mão de 6 com a quinta levantada". O
+`154032207` é exatamente esse caso e o detector devolve 5, sendo 6.
+`hidden_idx` devolve `None` ali, que significa "não sei" — não "não tem".
+**Consequência prática:** a travessia deixa de ser necessária pra CONTAR e passa
+a ser necessária só pra (a) resolver a ponta direita e (b) ler o custo da carta
+tapada. De N passos pra no máximo 1 confirmação — o que também ataca a queixa de
+lentidão. Trocar o scan por esse protocolo fica pra depois do gabarito.
+**`visible_total` não mudou de significado.** `src/vision/screen.py` usa ela pra
+classificar tela, e mexer no que ela quer dizer arrastaria a classificação junto.
+
+## ADR-083: A pergunta de rotulagem precisa apontar pro detector certo (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** ao revisar a tabela da ADR-078, `offered` (quantas cartas na oferta
+de level up / baú) apontava pra `cv_cards`, que vem de `detect_card_slots` — a
+caixa da **mão**. O painel central de escolha tem detector próprio,
+`detect_choice_slots`, com outra caixa e outro critério de seleção (altura, não
+tamanho).
+**O estrago:** a pergunta mediria a CV lendo a caixa errada, e registraria como
+erro do detector uma coisa que é erro da tabela. Um gabarito que culpa o
+componente errado é pior que gabarito nenhum.
+**Decisão:** `_observed` grava `cv_choice_cards` e `cv_choice_cursor` do detector
+do painel, e as perguntas de escolha apontam pra eles.
+**O teste que passa a pegar isso** troca a lista escrita à mão de campos válidos
+(que já ficou desatualizada duas vezes em dois commits) por uma invariante que
+não precisa de manutenção: **duas perguntas do mesmo estado não podem medir o
+mesmo campo**. Era exatamente a assinatura desse bug — `offered` e `hand_size`
+disputando `cv_cards`.

@@ -33,7 +33,7 @@ from loguru import logger
 from src.capture import grab
 from src.config import PROJECT_ROOT
 from src.perception import default_glyphbook, read_hp_hybrid, read_mana_hybrid
-from src.vision.cards import detect_card_slots, read_costs
+from src.vision.cards import detect_card_slots, detect_choice_slots, read_costs
 from src.vision.hud import read_hp, read_mana
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
@@ -147,14 +147,14 @@ def _lista_de_custos(raw: str) -> tuple[object, bool]:
 _ESCOLHA = (
     Pergunta(
         "offered",
-        "cv_cards",
+        "cv_choice_cards",
         "quantas cartas na oferta?",
         _num,
         "as cartas do painel central",
     ),
     Pergunta(
         "cursor",
-        "cv_cursor",
+        "cv_choice_cursor",
         "qual está selecionada? (1 = a da esquerda, n = nenhuma)",
         _selecionada,
         "aqui a selecionada é a mais ALTA, não a maior",
@@ -168,7 +168,7 @@ _PERGUNTAS: dict[str, tuple[Pergunta, ...]] = {
     "combat": (
         Pergunta(
             "hand_size",
-            "cv_cards",
+            "cv_hand_size",
             "cartas na mão?",
             _num,
             "conte TODAS as do leque, inclusive as tapadas pela vizinha",
@@ -289,12 +289,26 @@ def _observed(frame_path: Path) -> dict:
         "cv_parchment": sig.parchment,
         "cv_slate": sig.slate,
         "cv_cards": slots.visible_total,
+        "cv_hand_size": slots.hand_size,
+        "cv_hidden": slots.hidden_idx,
         "cv_cursor": slots.selected_idx,
         "cv_costs": read_costs(frame, slots, book),
+        **_observed_choice(frame),
         "cv_mana": read_mana(frame, book),
         "cv_hp": list(hp) if hp else None,
         **_observed_minimap(read_minimap(frame)),
     }
+
+
+def _observed_choice(frame) -> dict:
+    """O painel central das telas de escolha tem detector próprio.
+
+    `detect_card_slots` olha a caixa da MÃO, que só se sobrepõe em parte ao
+    painel; usar a contagem da mão como gabarito de "quantas cartas na oferta"
+    mediria a caixa errada e culparia a CV por isso.
+    """
+    escolha = detect_choice_slots(frame)
+    return {"cv_choice_cards": escolha.visible_total, "cv_choice_cursor": escolha.selected_idx}
 
 
 def _observed_minimap(minimap) -> dict:

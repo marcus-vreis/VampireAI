@@ -9,10 +9,13 @@ Dois fatos do jogo moldam o detector:
 1. O círculo da carta SELECIONADA pulsa entre azul e magenta, e fica ~50% maior.
    Por isso a máscara cobre as duas matizes e a seleção é decidida por tamanho,
    não por cor.
-2. A carta selecionada sobe e **cobre o círculo da vizinha à direita**. Por
-   isso `visible_total` é um piso, não o tamanho da mão. O total exato vem de
-   `src.vision.hand.traverse_hand`, que descobre o tamanho percorrendo o leque —
-   travessia que o scan de cartas já faz de qualquer jeito.
+2. A carta selecionada sobe e **cobre o círculo da vizinha à direita**, então
+   `visible_total` é um piso. Mas o vão que a oclusão deixa é grande demais pra
+   passar por espaçamento normal — 310-345px contra no máximo 146px, medido em
+   14 frames de combate — e por isso `hand_size` corrige a contagem NUM FRAME
+   SÓ, sem travessia. Sobra um caso: quando a levantada é a última visível não
+   existe vão depois pra denunciar, e esse ainda precisa de um passo de
+   travessia (`src.vision.hand.traverse_hand`).
 """
 
 from __future__ import annotations
@@ -49,6 +52,11 @@ _DEDUP_X = 26
 # A carta selecionada é ~1.4x o círculo normal. Fica no meio das duas escalas.
 _SELECTED_SIDE_RATIO = 1.25
 
+# Vao que denuncia um circulo tapado pela carta levantada. Medido nos 14 frames
+# de combate do dataset/: 310-345px nos quatro casos de oclusao, contra no
+# maximo 146px em qualquer outro vao. 220 fica no meio da folga de 164px.
+_OCCLUSION_GAP_PX = 220
+
 # Tamanho da carta em múltiplos do lado do círculo, medido em frames reais.
 _CARD_W_RATIO, _CARD_H_RATIO = 7.4, 9.2
 _CARD_DX_RATIO, _CARD_DY_RATIO = -0.60, -0.25
@@ -77,6 +85,42 @@ class CardSlots:
     def visible_total(self) -> int:
         """Piso do tamanho da mão — a selecionada pode estar cobrindo uma."""
         return len(self.circles)
+
+    @property
+    def hidden_idx(self) -> int | None:
+        """Posição REAL do círculo tapado pela carta levantada, ou None.
+
+        A carta selecionada sobe e cobre o círculo da vizinha à DIREITA, então
+        um frame com carta levantada mostra uma a menos. Isso não precisa da
+        travessia pra ser detectado: o vão deixado é grande demais pra ser
+        confundido com espaçamento normal.
+
+        Medido nos 14 frames de combate do `dataset/`: o vão entre o círculo
+        levantado e o próximo visível deu 310, 321, 333 e 345px nos quatro casos
+        de oclusão, contra **no máximo 146px** em qualquer outro vão de qualquer
+        frame, com ou sem carta levantada. A folga de 164px é o que permite
+        decidir num frame só.
+
+        **Fica um caso ambíguo, de propósito:** quando a levantada é a última
+        VISÍVEL, não dá pra saber se ela é a última da mão ou se está cobrindo
+        mais uma à direita — o vão que denunciaria não existe, porque não há
+        círculo depois. Esse caso continua exigindo travessia; devolver None
+        aqui é dizer "não sei", não "não tem".
+        """
+        i = self.selected_idx
+        if i is None or i >= len(self.circles) - 1:
+            return None
+        vao = self.circles[i + 1].x - self.circles[i].x
+        return i + 1 if vao >= _OCCLUSION_GAP_PX else None
+
+    @property
+    def hand_size(self) -> int:
+        """Tamanho da mão já corrigido pela oclusão.
+
+        Diferente de `visible_total`, que é piso. Continua sendo piso no caso
+        ambíguo descrito em `hidden_idx`.
+        """
+        return len(self.circles) + (1 if self.hidden_idx is not None else 0)
 
     @property
     def selected(self) -> CostCircle | None:
@@ -231,8 +275,12 @@ def read_costs(
     corte diagonal) não estão no livro.
     """
     if book is None:
-        return [None] * len(slots.circles)
-    return [_read_one_cost(frame, c, book) for c in slots.circles]
+        return [None] * slots.hand_size
+    lidos: list[int | None] = [_read_one_cost(frame, c, book) for c in slots.circles]
+    oculto = slots.hidden_idx
+    if oculto is not None:
+        lidos.insert(oculto, None)
+    return lidos
 
 
 def _read_one_cost(frame: np.ndarray, circle: CostCircle, book: GlyphBook) -> int | None:

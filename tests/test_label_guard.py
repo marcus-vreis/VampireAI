@@ -55,30 +55,20 @@ def test_a_sessao_nao_comeca_capturando_o_terminal(captura, capsys):
         assert label.session(ask_details=False) == 2
 
 
-def test_toda_pergunta_tem_um_campo_da_cv_do_outro_lado():
-    """A regra que impede a lista de perguntas de inchar. Pergunta sem `cv` custa
-    o tempo de quem responde e não mede nada — vira opinião solta no dataset."""
-    campos_cv = {
-        "cv_verdict",
-        "cv_parchment",
-        "cv_slate",
-        "cv_cards",
-        "cv_cursor",
-        "cv_costs",
-        "cv_mana",
-        "cv_hp",
-        "cv_facing",
-        "cv_enemies",
-        "cv_boss",
-    }
+def test_nenhuma_pergunta_aponta_pro_mesmo_campo_que_outra_do_mesmo_estado():
+    """Duas perguntas do mesmo estado com o mesmo `cv` significam que uma delas
+    está sendo medida contra a resposta errada. Foi o que aconteceu com
+    `offered`, que apontava pra contagem da MÃO enquanto pergunta sobre o painel
+    central de escolha — duas caixas diferentes, gabarito impossível."""
     for estado, perguntas in label._PERGUNTAS.items():
-        for p in perguntas:
-            assert p.cv in campos_cv, f"{estado}.{p.campo} aponta pra {p.cv}, que a CV não produz"
+        alvos = [p.cv for p in perguntas]
+        assert len(alvos) == len(set(alvos)), f"{estado} tem duas perguntas medindo {alvos}"
 
 
 def test_o_observed_produz_todos_os_campos_que_as_perguntas_citam(tmp_path):
-    """Fecha o outro lado do contrato acima: o teste anterior olha uma lista
-    escrita à mão, este olha o dicionário que a CV realmente devolve."""
+    """O contrato central: toda pergunta aponta pra um campo que a CV realmente
+    devolve. Pergunta sem gabarito custa o tempo de quem responde e não mede
+    nada — vira opinião solta no dataset."""
     frame = label.PROJECT_ROOT / "dataset" / "20260830T135106101_label_combat.png"
     if not frame.is_file():
         pytest.skip("frame de referência ausente")
@@ -183,3 +173,20 @@ def test_a_cobertura_explica_o_que_variar():
     texto = label._tabela_cobertura({"combat": 0})
     assert "VARIAÇÃO" in texto
     assert "mana alta e baixa" in texto
+
+
+def test_o_gabarito_de_escolha_vem_do_painel_central_nao_da_mao():
+    """`detect_card_slots` olha a caixa da MÃO, que só se sobrepõe em parte ao
+    painel de escolha. Medir "quantas cartas na oferta" contra a contagem da mão
+    culparia a CV por estar lendo a caixa errada."""
+    escolha = {p.campo: p.cv for p in label._PERGUNTAS["level_up"]}
+    assert escolha["offered"] == "cv_choice_cards"
+    assert escolha["cursor"] == "cv_choice_cursor"
+
+
+def test_a_pergunta_de_mao_mede_a_contagem_CORRIGIDA():
+    """`visible_total` é piso: com carta levantada ele conta uma a menos, porque
+    a levantada tapa o círculo da vizinha. Comparar a resposta humana contra o
+    piso registraria erro da CV onde ela nem tentou responder."""
+    combate = {p.campo: p.cv for p in label._PERGUNTAS["combat"]}
+    assert combate["hand_size"] == "cv_hand_size"

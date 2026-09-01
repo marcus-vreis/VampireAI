@@ -52,9 +52,7 @@ def test_classifica_tela(name: str, expected: Verdict, _cursor: int | None):
     assert signature(load(name)).verdict is expected
 
 
-@pytest.mark.parametrize(
-    ("name", "cursor"), [(n, c) for n, v, c in LABELED if v is Verdict.COMBAT]
-)
+@pytest.mark.parametrize(("name", "cursor"), [(n, c) for n, v, c in LABELED if v is Verdict.COMBAT])
 def test_localiza_cursor_em_combate(name: str, cursor: int):
     slots = detect_card_slots(load(name))
     assert slots.selected is not None
@@ -101,3 +99,51 @@ def test_minimapa_ausente_em_combate():
 )
 def test_aritmetica_de_giro(atual: Facing, desejada: Facing, esperado: Turn):
     assert relative_turn(atual, desejada) is esperado
+
+
+# --- oclusao da carta levantada -------------------------------------------
+# A sequencia 154xxx e UM combate de 6 cartas, capturado a cada passo de uma
+# travessia da direita pra esquerda. E o unico gabarito de oclusao que existe:
+# `154006402` tem a ultima levantada e mostra as 6, os demais tem uma do meio
+# levantada e mostram 5. A diferenca entre eles E o efeito a medir.
+_MESMO_COMBATE_DE_6 = {
+    "20260802T154006402_map.png": (6, 5, None),  # ultima levantada: nada tapado
+    "20260802T154035945_card_scan_2.png": (5, 3, 4),
+    "20260802T154039124_card_scan_3.png": (5, 2, 3),
+    "20260802T154042627_card_scan_4.png": (5, 1, 2),
+}
+
+
+@pytest.mark.parametrize("nome,esperado", sorted(_MESMO_COMBATE_DE_6.items()))
+def test_a_carta_levantada_tapa_exatamente_uma_vizinha(nome, esperado):
+    """Num frame so, sem travessia: 5 circulos visiveis viram mao de 6.
+
+    O vao que a oclusao deixa nao passa por espacamento normal — 310-345px
+    contra no maximo 146px em qualquer outro vao dos 14 frames de combate do
+    dataset/. A folga de 164px e o que permite decidir sem percorrer o leque.
+    """
+    caminho = FRAMES / nome
+    if not caminho.is_file():
+        pytest.skip(f"frame ausente: {nome}")
+    visiveis, selecionada, tapada = esperado
+    slots = detect_card_slots(cv2.imread(str(caminho)))
+    assert (slots.visible_total, slots.selected_idx) == (visiveis, selecionada)
+    assert slots.hidden_idx == tapada
+    assert slots.hand_size == 6, "os quatro frames sao do MESMO combate de 6 cartas"
+
+
+def test_a_ultima_levantada_e_ambigua_e_nao_finge_que_sabe():
+    """`154032207` tem a levantada na ponta direita e mostra 5 circulos, mas a
+    mao e de 6 — a sexta esta tapada e nao ha vao depois pra denuncia-la.
+
+    O detector devolve `hidden_idx=None`, que significa "nao sei", e `hand_size`
+    continua sendo piso. Fingir 6 aqui seria chutar: o mesmo frame poderia ser
+    uma mao de 5 com a ultima levantada. Esse caso exige travessia.
+    """
+    caminho = FRAMES / "20260802T154032207_card_scan_1.png"
+    if not caminho.is_file():
+        pytest.skip("frame ausente")
+    slots = detect_card_slots(cv2.imread(str(caminho)))
+    assert slots.selected_idx == slots.visible_total - 1, "levantada na ponta direita"
+    assert slots.hidden_idx is None
+    assert slots.hand_size == 5, "piso, nao a verdade (que e 6)"
