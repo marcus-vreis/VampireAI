@@ -1178,3 +1178,39 @@ presente = respondido), então os frames já gravados continuam valendo.
 **O palpite da CV continua aparecendo só DEPOIS da resposta.** Mostrar antes
 faria a pessoa concordar com ele, e o gabarito passaria a medir a CV contra ela
 mesma — o mesmo vício circular que a ADR-077 evitou no conjunto de referência.
+
+## ADR-079: O HP falhava só em combate, e a rotulagem achou (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** ao ligar mana e HP ao `_observed` da rotulagem (ADR-078), os dois
+frames já capturados deram resultados incoerentes: `read_hp` devolvia `(61, 61)`
+no frame de **mapa** e `None` no de **combate** — sendo que o coração mostra
+61/61 nos dois.
+**Causa, medida antes de mexer:** em combate o jogo desenha mais um indicador
+dentro de `HEART_BOX`, embaixo e à esquerda do coração. Os glifos, em coordenadas
+do patch:
+
+| linha | y | x | altura | leitura |
+|---|---|---|---|---|
+| HP atual | 31..48 | 51..65 | 17 | 61 |
+| HP máximo | 53..71 | 51..65 | 18 | 61 |
+| **intruso** | 71..93 | **26** | **22** | 1 |
+
+Três discriminadores possíveis: posição vertical, posição horizontal, altura.
+**Decisão:** `read_hp` passa a ler as **duas primeiras** linhas em vez de exigir
+exatamente duas. É o discriminador que não introduz número mágico: a docstring já
+dizia que "o coração empilha HP atual sobre HP máximo", então o que estiver
+abaixo do par não é o par. Encolher `HEART_BOX` foi descartado — a mesma caixa é
+recortada pra mandar ao modelo em `read_hp_hybrid`, e mudá-la mudaria o que o
+modelo vê.
+**Por que isso importa mais do que parece:** o estado afetado era **só o
+combate** — o único em que o HP entra na decisão (ADR-036). Nos outros o HP era
+lido corretamente e não servia pra nada. É a terceira vez que o HP quebra em
+silêncio no caminho até o prompt, e a primeira em que um teste sintético não
+teria pego: o frame precisava ser de combate real.
+**O achado veio da ferramenta, não de inspeção.** A regra que produziu isso é a
+da ADR-078 — toda pergunta de rotulagem aponta pra um campo que a CV produz.
+Ligar `cv_hp` ao `_observed` bastou pra a incoerência aparecer sozinha, antes de
+qualquer sessão de rotulagem acontecer.
+**Regressão:** `tests/test_digits.py` passa a usar o frame de combate versionado
+em `dataset/`, e afirma que a terceira linha continua aparecendo — se o jogo
+parar de desenhar o indicador, o teste avisa em vez de passar por acidente.

@@ -140,3 +140,29 @@ def test_digitos_diferentes_nao_se_confundem(book):
     book.teach([seis], 6)
     book.teach([seis], 6)
     assert book.lookup(um.key) is None
+
+
+# Frame de combate real, capturado na primeira sessão de rotulagem. Coração
+# mostra 61/61 — conferido olhando a imagem.
+COMBATE = _RAIZ / "dataset" / "20260830T135106101_label_combat.png"
+
+
+def test_le_o_coracao_em_combate_com_o_indicador_extra(book):
+    """Em combate o jogo desenha mais um indicador dentro de `HEART_BOX`.
+
+    Exigir "exatamente duas linhas" fazia `read_hp` devolver None justamente no
+    único estado em que o HP importa pra decisão: o par de HP aparece em
+    y=31..71, e o intruso em y=71..93, x=26 — uma terceira linha. Achado pela
+    sessão de rotulagem, não por teste sintético.
+    """
+    if not COMBATE.is_file():
+        pytest.skip("frame de combate ausente")
+    from src.vision.hud import heart_rows
+
+    frame = cv2.imread(str(COMBATE))
+    rows = heart_rows(frame)
+    assert len(rows) == 3, "o indicador extra continua entrando na caixa do coração"
+    for row in rows[:2]:
+        book.teach(row, 61)
+        book.teach(row, 61)
+    assert read_hp(frame, book) == (61, 61)

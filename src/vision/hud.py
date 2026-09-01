@@ -95,11 +95,18 @@ def read_hp(frame: np.ndarray, book: GlyphBook | None = None) -> tuple[int, int]
     glifos por faixa vertical. A versão anterior partia a string de dígitos ao
     meio, o que só funcionava quando o total tinha contagem par e casava 6/1 com
     "61" por acidente.
+
+    **As duas primeiras linhas, não "exatamente duas".** Em combate o jogo
+    desenha mais um indicador dentro de `HEART_BOX`, embaixo e à esquerda do
+    coração; exigir duas linhas fazia o HP falhar justamente no único estado em
+    que ele importa pra decisão. Medido nos dois frames do `dataset/`: o par de
+    HP fica em y=31..71, x=51..65, altura 17-18; o intruso em y=71..93, x=26,
+    altura 22 — abaixo do par, que por isso continua sendo o topo.
     """
     if book is None:
         return None
     rows = heart_rows(frame)
-    if len(rows) != 2:
+    if len(rows) < 2:
         return None
     current, maximum = book.read(rows[0]), book.read(rows[1])
     if current is None or maximum is None:
