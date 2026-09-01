@@ -35,6 +35,12 @@ _MIN_SCORE = {
     "inimigo": 0.70,
     "chefe": 0.70,
     "interrogacao": 0.90,
+    # Os dois baús são retângulos cheios, forma bem mais genérica que um crânio,
+    # então casam com parede e canto de sala em limiar baixo. Exigente de
+    # propósito: baú é oportunidade, não obstáculo — perder um custa menos que
+    # mandar o BFS pra um canto de parede.
+    "bau": 0.88,
+    "bau_chefe": 0.88,
 }
 _NMS_RADIUS = 10
 
@@ -43,12 +49,16 @@ class IconKind(str, Enum):
     ENEMY = "inimigo"
     BOSS = "chefe"
     QUESTION = "interrogacao"
+    CHEST = "bau"
+    BOSS_CHEST = "bau_chefe"
 
 
 _TEMPLATE_FILE = {
     IconKind.ENEMY: "skull.png",
     IconKind.BOSS: "boss.png",
     IconKind.QUESTION: "question.png",
+    IconKind.CHEST: "chest.png",
+    IconKind.BOSS_CHEST: "boss_chest.png",
 }
 
 
@@ -73,17 +83,14 @@ def _match_one(
     gray: np.ndarray, tpl: np.ndarray, scale: float, min_score: float
 ) -> list[tuple[int, int, float]]:
     if scale != 1.0:
-        tpl = cv2.resize(
-            tpl, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
-        )
+        tpl = cv2.resize(tpl, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
     if tpl.shape[0] > gray.shape[0] or tpl.shape[1] > gray.shape[1]:
         return []
     result = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
     ys, xs = np.nonzero(result >= min_score)
     half_h, half_w = tpl.shape[0] // 2, tpl.shape[1] // 2
     return [
-        (int(x) + half_w, int(y) + half_h, float(result[y, x]))
-        for x, y in zip(xs, ys, strict=True)
+        (int(x) + half_w, int(y) + half_h, float(result[y, x])) for x, y in zip(xs, ys, strict=True)
     ]
 
 
@@ -91,10 +98,7 @@ def _suppress(hits: list[Icon]) -> list[Icon]:
     """Mantém só o melhor acerto de cada vizinhança."""
     kept: list[Icon] = []
     for icon in sorted(hits, key=lambda i: -i.score):
-        if any(
-            abs(icon.x - k.x) < _NMS_RADIUS and abs(icon.y - k.y) < _NMS_RADIUS
-            for k in kept
-        ):
+        if any(abs(icon.x - k.x) < _NMS_RADIUS and abs(icon.y - k.y) < _NMS_RADIUS for k in kept):
             continue
         kept.append(icon)
     return kept

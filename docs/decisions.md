@@ -1353,3 +1353,38 @@ o efeito é abortar o turno. Não dá pra dimensionar sem frame real de cada tel
 `stage_complete` e `game_over` podem ou não cair ali, dependendo do painel. Como
 `stage_complete` é literalmente o objetivo do projeto (zerar a fase 1), esse é o
 motivo mais forte pra rotular esses cinco estados, que agora é possível.
+
+## ADR-085: Os dois baús do minimapa, recortados dos frames da sessão (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** o item 3 do roadmap — "baú, obstáculo e saída de fase no minimapa"
+— estava parado por falta de sprite. A sessão de rotulagem entregou 10 mapas, e
+dois deles são da **fase 2/4**, que tem ícones que a fase 1 não tem.
+**O que apareceu.** Deixando a CV achar os blobs no tom de ícone (cinza 128-146)
+em vez de eu chutar coordenada, e olhando o overlay numerado: além das caveiras e
+do chefe, **dois** ícones de baú, não um.
+
+| ícone | forma |
+|---|---|
+| `bau` | caixa de tampa reta com trinco |
+| `bau_chefe` | tampa arredondada, X decorativos nas laterais |
+
+O baú comum vinha partido em dois blobs (tampa e corpo separados pelo trinco), o
+que explica por que uma busca por blob único não o acharia.
+**Validação, com teste negativo de verdade.** Os 8 mapas da fase 1/4 não têm baú
+nenhum. Rodando os dois templates novos neles: **zero** detecções. Isso importa
+porque baú é quase um retângulo cheio — forma muito mais genérica que um crânio,
+e portanto muito mais propensa a casar com parede e canto de sala. Por isso o
+limiar deles é 0.88, contra 0.70 de inimigo e chefe.
+**A confirmação que não dava pra forjar.** Os dois frames da fase 2 são da mesma
+run, e entre um e outro **o jogador recolheu o baú comum**. O detector acha `bau`
+no primeiro e não acha no segundo, com o `bau_chefe` presente nos dois. Um
+detector que casasse com parede teria achado nos dois.
+**O que NÃO foi feito:** os baús não entraram na prioridade de `nav.py`. Detectar
+é medível; decidir se vale desviar a rota por um baú é escolha de jogo, e não há
+evidência nenhuma sobre isso ainda. Ficam visíveis pro planejador sem mudar
+comportamento.
+**Obstáculo e saída de fase continuam sem sprite** — não apareceram em nenhum dos
+10 mapas. O item 3 fica parcialmente fechado.
+**Sem risco pro BFS:** `_icons_on_floor` recupera pixels de ícone pela FAIXA DE
+TOM (128-146), não por template, então os baús já entravam na área andável antes
+mesmo de existir detector pra eles. Há teste afirmando isso.

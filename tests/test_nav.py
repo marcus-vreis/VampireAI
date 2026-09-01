@@ -31,9 +31,7 @@ def load(name: str):
 
 def test_conta_icones_do_frame_de_referencia():
     minimap = read_minimap(load(REFERENCE))
-    counts = collections.Counter(
-        i.kind for i in find_icons(minimap.gray, minimap.arrow_side)
-    )
+    counts = collections.Counter(i.kind for i in find_icons(minimap.gray, minimap.arrow_side))
     assert counts[IconKind.ENEMY] == 6
     assert counts[IconKind.BOSS] == 1
 
@@ -45,7 +43,9 @@ def test_inimigo_morto_some_da_contagem():
     if antes is None:
         pytest.skip("frame anterior ausente")
     n_antes = sum(1 for i in find_icons(antes.gray, antes.arrow_side) if i.kind is IconKind.ENEMY)
-    n_depois = sum(1 for i in find_icons(depois.gray, depois.arrow_side) if i.kind is IconKind.ENEMY)
+    n_depois = sum(
+        1 for i in find_icons(depois.gray, depois.arrow_side) if i.kind is IconKind.ENEMY
+    )
     assert n_antes == n_depois + 1
 
 
@@ -170,9 +170,7 @@ def test_bonus_ficam_colados_na_borda_da_sala():
     assert bonuses, "o frame de referência tem pontos de bônus visíveis"
 
     piso = minimap.walkable.astype(np.uint8)
-    borda = cv2.dilate(piso, np.ones((3, 3), np.uint8)) - cv2.erode(
-        piso, np.ones((3, 3), np.uint8)
-    )
+    borda = cv2.dilate(piso, np.ones((3, 3), np.uint8)) - cv2.erode(piso, np.ones((3, 3), np.uint8))
     ys, xs = np.nonzero(borda)
     for bx, by in bonuses:
         dist = np.sqrt(((xs - bx) ** 2 + (ys - by) ** 2).min())
@@ -208,3 +206,69 @@ def test_bonus_nao_viram_alvo_de_navegacao():
     step = plan(minimap)
     assert step is not None
     assert "bônus" not in step.reason
+
+
+# --- baus no minimapa ------------------------------------------------------
+# Recortados do frame 20260901T193925141 (fase 2/4), o primeiro do dataset a
+# mostrar os dois tipos. Os 8 mapas da fase 1/4 nao tem bau nenhum e servem de
+# teste negativo -- e o unico jeito honesto de medir falso positivo num
+# template que e basicamente um retangulo cheio.
+_MAPAS_FASE1 = (
+    "20260830T134955063_label_map.png",
+    "20260830T170626089_label_map.png",
+    "20260901T193104652_label_map.png",
+    "20260901T193203009_label_map.png",
+    "20260901T193230959_label_map.png",
+    "20260901T193606851_label_map.png",
+    "20260901T193704035_label_map.png",
+    "20260901T193755377_label_map.png",
+)
+_DATASET = Path(__file__).resolve().parent.parent / "dataset"
+
+
+def _icones(nome):
+    import collections
+
+    from src.vision.icons import find_icons
+    from src.vision.minimap import read_minimap
+
+    caminho = _DATASET / nome
+    if not caminho.is_file():
+        pytest.skip(f"frame ausente: {nome}")
+    mm = read_minimap(cv2.imread(str(caminho)))
+    assert mm is not None, "minimapa nao localizado"
+    return collections.Counter(i.kind.value for i in find_icons(mm.gray, mm.arrow_side))
+
+
+def test_acha_os_dois_tipos_de_bau():
+    c = _icones("20260901T193925141_label_map.png")
+    assert c["bau"] == 1, "bau comum: tampa reta com trinco, na borda esquerda"
+    assert c["bau_chefe"] == 1, "bau ornamentado: tampa arredondada com X nas laterais"
+
+
+def test_o_bau_some_do_mapa_quando_e_recolhido():
+    """Confirmacao independente do detector: os dois frames da fase 2 sao da
+    mesma run, e entre eles o jogador pegou o bau comum. Os blobs em (56,138)
+    existem so no primeiro. Um detector que "achasse" bau nos dois estaria
+    casando com parede, nao com bau."""
+    c = _icones("20260901T194024213_label_map.png")
+    assert c["bau"] == 0
+    assert c["bau_chefe"] == 1, "o ornamentado continua no mapa"
+
+
+@pytest.mark.parametrize("nome", _MAPAS_FASE1)
+def test_nenhum_falso_positivo_de_bau_na_fase_1(nome):
+    c = _icones(nome)
+    assert c["bau"] == 0 and c["bau_chefe"] == 0
+
+
+def test_os_baus_entram_na_area_andavel():
+    """Os icones sao cinza 136, ABAIXO do limiar de piso. Sem soma-los a area
+    andavel eles viram buracos e o BFS nao alcanca a celula do bau."""
+    from src.vision.minimap import _ICON_HI, _ICON_LO
+
+    tpl = cv2.imread(str(Path("src/vision/templates/chest.png")), cv2.IMREAD_GRAYSCALE)
+    assert tpl is not None
+    assert (tpl >= _ICON_LO).any() and (tpl <= _ICON_HI).any(), (
+        "o tom do bau precisa cair na faixa que _icons_on_floor recupera"
+    )
