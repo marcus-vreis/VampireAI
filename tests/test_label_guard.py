@@ -64,6 +64,7 @@ def test_toda_pergunta_tem_um_campo_da_cv_do_outro_lado():
         "cv_slate",
         "cv_cards",
         "cv_cursor",
+        "cv_costs",
         "cv_mana",
         "cv_hp",
         "cv_facing",
@@ -158,3 +159,27 @@ def test_a_cobertura_diz_o_que_falta():
     """A pergunta "é pra fazer o jogo todo?" precisa ter resposta na tela."""
     assert "completa" in label._tabela_cobertura(dict.fromkeys(label._META, 99))
     assert "combat" in label._tabela_cobertura({"combat": 0})
+
+
+def test_custo_da_carta_e_mana_disponivel_sao_perguntas_diferentes():
+    """Duas coisas distintas que a mesma palavra "mana" nomeia: o que a carta
+    CUSTA (algarismo no círculo, um por carta) e o que você TEM (orbe azul).
+    Sem as duas não dá pra medir se `combat.validate` reprova jogada impossível."""
+    combate = {p.campo: p for p in label._PERGUNTAS["combat"]}
+    assert combate["costs"].cv == "cv_costs"
+    assert combate["mana"].cv == "cv_mana"
+    assert "CUSTA" in combate["costs"].onde and "TEM" in combate["mana"].onde
+
+
+def test_lista_de_custos_aceita_virgula_e_espaco():
+    assert label._lista_de_custos("1,1,1,2,0,0") == ([1, 1, 1, 2, 0, 0], True)
+    assert label._lista_de_custos("1 1 2") == ([1, 1, 2], True)
+    assert label._lista_de_custos("") == (None, False)
+
+
+def test_a_cobertura_explica_o_que_variar():
+    """ "São 12 fotos do combate?" — não: 12 SITUAÇÕES diferentes. Doze fotos do
+    mesmo turno medem uma situação só, e o detector passaria sem ser testado."""
+    texto = label._tabela_cobertura({"combat": 0})
+    assert "VARIAÇÃO" in texto
+    assert "mana alta e baixa" in texto

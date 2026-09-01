@@ -1214,3 +1214,49 @@ qualquer sessão de rotulagem acontecer.
 **Regressão:** `tests/test_digits.py` passa a usar o frame de combate versionado
 em `dataset/`, e afirma que a terceira linha continua aparecendo — se o jogo
 parar de desenhar o indicador, o teste avisa em vez de passar por acidente.
+
+## ADR-080: O custo da carta é CV, não VLM (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** perguntado por que a rotulagem pedia "mana" mas não o custo da
+carta. A pergunta expôs uma inconsistência com a própria ADR-022: o custo é **um
+algarismo dentro de um círculo que a CV já localiza**, ou seja, geometria. Mesmo
+assim ele chega hoje pelo `CardDB`, preenchido pelo VLM — a leitura fica presa à
+primeira aparição da carta e ao acerto do modelo naquela chamada.
+**Medição, antes de decidir.** Protótipo sobre o frame de combate do `dataset/`,
+usando só o que já existe (`detect_card_slots` + `text_mask` + `GlyphBook`):
+
+| carta | verdade | lido | distância ao glifo mais próximo |
+|---|---|---|---|
+| 1..4 | 1, 1, 1, 2 | 1, 1, 1, 2 | 60, 39, 15, 46 |
+| 5 | **0** | **6** | 63 |
+| 6 | **0** | None | 75 |
+
+**A máscara está perfeita** — a segmentação não precisou de ajuste nenhum. O que
+falta é **vocabulário**: os algarismos do círculo são um desenho diferente dos do
+HUD (o `0` tem corte diagonal), e o livro de glifos não os viu ainda. Pela
+ADR-033 isso se resolve sozinho: uma chamada de modelo por algarismo até
+aparecer duas vezes, e depois é local pra sempre.
+**Decisão:** `read_costs` entra em `src/vision/cards.py` como CV pura, e
+`cv_costs` entra no `_observed` da rotulagem com a pergunta correspondente. Não
+troco ainda o caminho do `CardDB` — a taxa medida é de UM frame, e o gabarito
+que autoriza a troca é justamente o que a sessão de rotulagem vai produzir.
+**Risco encontrado de passagem, e deixado registrado:** `_MAX_GLYPH_DISTANCE=72`
+deixou o `0` cortado casar com um `6` a distância 63, devolvendo **um número
+errado com confiança**, não `None`. As leituras corretas ficaram em 15..60, então
+a folga entre certo e errado é de 3 — pequena demais pra afinar com um frame só.
+Um custo errado faz `combat.validate` aprovar jogada impossível. Fica medindo até
+haver frames suficientes; a tabela de acerto por campo em `--summary` mostra isso.
+**Nota de UX que veio junto:** "mana" nomeava duas coisas diferentes. As
+perguntas agora dizem qual é qual — o que a carta CUSTA e o que você TEM.
+
+## ADR-081: A meta de cobertura precisa dizer o que VARIAR (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** "tá falando que preciso completar N imagens do combate, mas são de
+situações diferentes? não entendi." A tabela dava um número e nenhum critério.
+**O risco que isso corria:** doze frames do mesmo turno satisfazem `combat 12/12`
+e medem **uma** situação. A suíte passaria a reportar 100% sem nunca ter testado
+mão pequena, mão sem carta levantada, ou mana insuficiente — e um detector
+quebrado nesses casos passaria limpo.
+**Decisão:** `_VARIEDADE` acompanha `_META`, e a tabela imprime o que precisa
+mudar entre um frame e outro do mesmo estado. O número sozinho é meta de volume;
+o que a suíte precisa é cobertura de situação.

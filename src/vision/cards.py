@@ -22,6 +22,9 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from src.vision.digits import GlyphBook, find_glyphs
+from src.vision.hud import text_mask
+
 # Faixas HSV (OpenCV: H 0-179) amostradas em frames reais.
 _BLUE_LO, _BLUE_HI = np.array([100, 150, 60]), np.array([125, 255, 230])
 _MAGENTA_LO, _MAGENTA_HI = np.array([138, 90, 90]), np.array([176, 255, 255])
@@ -199,3 +202,45 @@ def card_bbox(circle: CostCircle, side: int | None = None) -> tuple[int, int, in
         int(_CARD_W_RATIO * s),
         int(_CARD_H_RATIO * s),
     )
+
+
+# Recuo pra dentro do círculo antes de procurar o algarismo, em fração do lado.
+# O anel do círculo é uma curva grossa e entraria como componente na máscara.
+_COST_INSET = 6
+# O algarismo tem ~10px no frame original; find_glyphs pede altura mínima maior
+# que isso. Ampliar é mais barato que afrouxar o filtro de forma, que existe pra
+# descartar o contorno do coração.
+_COST_UPSCALE = 4
+
+
+def read_costs(
+    frame: np.ndarray, slots: CardSlots, book: GlyphBook | None = None
+) -> list[int | None]:
+    """Custo de mana de cada carta, lido do próprio círculo. None onde ilegível.
+
+    O custo é um algarismo dentro de um círculo que a CV já localiza — pela regra
+    da ADR-022 isso é geometria, não semântica, e não devia depender do modelo.
+    Hoje ele chega pelo `CardDB`, que é preenchido pelo VLM: a leitura fica presa
+    à primeira aparição da carta e ao acerto do modelo naquela chamada.
+
+    A segmentação não precisou de ajuste nenhum — `text_mask` já separa o
+    algarismo do azul do círculo. O que falta é vocabulário: os algarismos do
+    círculo são um desenho diferente dos do HUD, então o livro de glifos precisa
+    aprendê-los (ADR-033), e até lá devolve None. Medido no frame de combate do
+    `dataset/`: 1, 1, 1 e 2 saem certos por vizinhança; os dois `0` (que têm um
+    corte diagonal) não estão no livro.
+    """
+    if book is None:
+        return [None] * len(slots.circles)
+    return [_read_one_cost(frame, c, book) for c in slots.circles]
+
+
+def _read_one_cost(frame: np.ndarray, circle: CostCircle, book: GlyphBook) -> int | None:
+    m = max(2, circle.side // _COST_INSET)
+    patch = frame[circle.y + m : circle.y + circle.h - m, circle.x + m : circle.x + circle.w - m]
+    if patch.size == 0:
+        return None
+    big = cv2.resize(
+        patch, None, fx=_COST_UPSCALE, fy=_COST_UPSCALE, interpolation=cv2.INTER_NEAREST
+    )
+    return book.read(find_glyphs(text_mask(big)))

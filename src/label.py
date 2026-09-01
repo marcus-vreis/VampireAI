@@ -33,7 +33,7 @@ from loguru import logger
 from src.capture import grab
 from src.config import PROJECT_ROOT
 from src.perception import default_glyphbook, read_hp_hybrid, read_mana_hybrid
-from src.vision.cards import detect_card_slots
+from src.vision.cards import detect_card_slots, read_costs
 from src.vision.hud import read_hp, read_mana
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
@@ -135,6 +135,15 @@ def _direcao(raw: str) -> tuple[object, bool]:
     return (rumo[raw[0]], True) if raw and raw[0] in rumo else (None, False)
 
 
+def _lista_de_custos(raw: str) -> tuple[object, bool]:
+    """Uma pergunta só pra mão inteira: digitar seis números separados é mais
+    rápido que responder seis perguntas, e dá o gabarito na ordem certa."""
+    partes = [p.strip() for p in raw.replace(" ", ",").split(",") if p.strip()]
+    if partes and all(p.isdigit() for p in partes):
+        return [int(p) for p in partes], True
+    return None, False
+
+
 _ESCOLHA = (
     Pergunta(
         "offered",
@@ -173,11 +182,18 @@ _PERGUNTAS: dict[str, tuple[Pergunta, ...]] = {
             "maior, pulsando entre azul e magenta",
         ),
         Pergunta(
+            "costs",
+            "cv_costs",
+            "custo de cada carta, da esquerda pra direita? (ex.: 1,1,1,2,0,0)",
+            _lista_de_custos,
+            "o algarismo dentro do círculo de cada carta — o que ela CUSTA",
+        ),
+        Pergunta(
             "mana",
             "cv_mana",
-            "mana?",
+            "mana disponível?",
             _num,
-            "o número dentro do orbe azul, à direita do leque",
+            "o número no orbe azul à direita do leque — o que você TEM",
         ),
         Pergunta(
             "hp",
@@ -274,6 +290,7 @@ def _observed(frame_path: Path) -> dict:
         "cv_slate": sig.slate,
         "cv_cards": slots.visible_total,
         "cv_cursor": slots.selected_idx,
+        "cv_costs": read_costs(frame, slots, book),
         "cv_mana": read_mana(frame, book),
         "cv_hp": list(hp) if hp else None,
         **_observed_minimap(read_minimap(frame)),
@@ -395,12 +412,33 @@ def _contagem_gravada() -> collections.Counter:
     return collections.Counter(json.loads(ln)["state"] for ln in linhas if ln.strip())
 
 
+# O que precisa VARIAR entre os frames de um mesmo estado. Sem isso a meta
+# parece "tire 12 fotos do combate", e 12 fotos do mesmo turno medem uma
+# situação só — o detector passaria na suíte sem nunca ter sido testado.
+_VARIEDADE: dict[str, str] = {
+    "combat": "mãos de tamanhos diferentes, com e sem carta levantada, mana alta e baixa",
+    "map": "corredor, sala, cruzamento; virado pros quatro lados; com e sem chefe à vista",
+    "level_up": "ofertas diferentes, cursor em posições diferentes",
+    "shop": "com e sem dinheiro pra comprar",
+    "chest": "cursor em posições diferentes",
+    "boss_chest": "cursor em posições diferentes",
+    "chest_card_target": "mãos de tamanhos diferentes",
+}
+
+
 def _tabela_cobertura(feito: collections.Counter) -> str:
     faltando = [(e, n) for e, n in _META.items() if feito.get(e, 0) < n]
     if not faltando:
         return "Cobertura completa. Pode parar quando quiser."
-    linhas = ["Ainda falta (você NÃO precisa rotular o jogo todo):"]
-    linhas += [f"  {e:20} {feito.get(e, 0):>2}/{n}" for e, n in faltando]
+    linhas = [
+        "Ainda falta. NÃO é pra rotular o jogo todo, e nem tirar N fotos da mesma",
+        "tela: o que mede alguma coisa é a VARIAÇÃO entre os frames.",
+        "",
+    ]
+    for estado, n in faltando:
+        variar = _VARIEDADE.get(estado, "")
+        sufixo = f"   variar: {variar}" if variar else ""
+        linhas.append(f"  {estado:20} {feito.get(estado, 0):>2}/{n}{sufixo}")
     return "\n".join(linhas)
 
 
