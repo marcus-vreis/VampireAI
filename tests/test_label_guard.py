@@ -24,17 +24,37 @@ def captura(tmp_path):
         mock.patch.object(label, "cv2"),
         mock.patch.object(label, "DATASET_DIR", tmp_path / "ds"),
         mock.patch.object(label, "LABELS_FILE", tmp_path / "ds" / "labels.jsonl"),
+        mock.patch.object(label, "game_is_visible", return_value=True),
     ):
         yield shot
 
 
-def test_recusa_gravar_quando_a_captura_nao_e_o_jogo(captura):
+def test_recusa_gravar_quando_o_jogo_esta_coberto(captura):
     """Pra ler a tecla o terminal precisa do foco, então o jogo nunca está
-    focado durante a rotulagem. Sem esta checagem, um jogo atrás do terminal
-    produziria um dataset inteiro de prints do terminal rotulados como combate."""
-    with mock.patch.object(label, "signature", return_value=assinatura(Verdict.NOT_GAME)):
+    focado durante a rotulagem. Quem responde se dá pra capturar é o SISTEMA:
+    a janela do jogo está no topo nos pixels que seriam capturados?
+
+    Sem isso, um jogo atrás do terminal produziria um dataset inteiro de prints
+    do terminal rotulados como combate."""
+    with mock.patch.object(label, "game_is_visible", return_value=False):
         assert label.capture_labeled("combat") is None
-    assert not captura.exists(), "o frame ruim é apagado, não vai pro dataset"
+
+
+def test_captura_tela_que_a_CV_NAO_reconhece(captura):
+    """A regressão que motivou trocar o guarda (ADR-084).
+
+    O guarda antigo perguntava "a CV reconhece esta tela?" — e recusava quando a
+    resposta era não. Mas as telas que MAIS precisam ser rotuladas são
+    exatamente essas: menu, loja, título, game over. O guarda recusava o
+    material necessário pra consertar o próprio ponto cego.
+    """
+    with (
+        mock.patch.object(label, "signature", return_value=assinatura(Verdict.NOT_GAME)),
+        mock.patch.object(label, "_observed", return_value={"cv_verdict": "not_game"}),
+    ):
+        alvo = label.capture_labeled("shop")
+        assert alvo is not None, "jogo visível: captura, mesmo sem a CV reconhecer a tela"
+        assert label.registrar(alvo, "shop", {})["state"] == "shop"
 
 
 def test_grava_quando_a_captura_e_o_jogo(captura):
@@ -49,10 +69,21 @@ def test_grava_quando_a_captura_e_o_jogo(captura):
     assert registro["hand_size"] == 5
 
 
-def test_a_sessao_nao_comeca_capturando_o_terminal(captura, capsys):
+def test_a_sessao_nao_comeca_com_o_jogo_coberto(captura, capsys):
     """Melhor recusar de saída que descobrir depois de 50 frames rotulados."""
-    with mock.patch.object(label, "signature", return_value=assinatura(Verdict.NOT_GAME)):
+    with mock.patch.object(label, "game_is_visible", return_value=False):
         assert label.session(ask_details=False) == 2
+
+
+def test_sem_janela_localizada_cai_na_checagem_por_conteudo(captura):
+    """`game_is_visible` devolve None quando o Win32 não acha a janela. Aí não há
+    resposta do sistema e sobra a checagem fraca — com o ponto cego de volta,
+    mas avisado. Melhor que capturar o terminal em silêncio."""
+    with (
+        mock.patch.object(label, "game_is_visible", return_value=None),
+        mock.patch.object(label, "signature", return_value=assinatura(Verdict.NOT_GAME)),
+    ):
+        assert label.capture_labeled("combat") is None
 
 
 def test_nenhuma_pergunta_aponta_pro_mesmo_campo_que_outra_do_mesmo_estado():

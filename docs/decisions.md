@@ -1316,3 +1316,40 @@ do painel, e as perguntas de escolha apontam pra eles.
 não precisa de manutenção: **duas perguntas do mesmo estado não podem medir o
 mesmo campo**. Era exatamente a assinatura desse bug — `offered` e `hand_size`
 disputando `cv_cards`.
+
+## ADR-084: O guarda da rotulagem pergunta ao sistema, não à CV (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** relatado que a rotulagem recusava capturar menu e loja dizendo que
+"não está reconhecendo o jogo". Estava mesmo — e o guarda estava certo pelo seu
+próprio critério, que era o errado.
+**A armadilha circular.** O guarda (ADR-075) perguntava à CV: *esta tela parece o
+jogo?* Recusava quando a resposta era `NOT_GAME`. Mas as telas que MAIS precisam
+ser rotuladas são exatamente as que a CV ainda não reconhece — título, menu,
+loja, game over. **O guarda recusava o material necessário pra consertar o
+próprio ponto cego.** O conjunto de referência não tem nenhum frame desses cinco
+estados, e agora dá pra ver por quê.
+**Por que o conteúdo não separava.** Tentei um discriminador por riqueza de cor,
+achando que terminal seria pobre e jogo seria rico. Medido (cores quantizadas em
+16 níveis por canal): o frame `not_game` do dataset — que é o VS Code com o
+painel do Ollama por cima — deu **762**, contra 818-1414 nas telas de jogo. 56 de
+separação. Descartado.
+**Decisão: perguntar ao Windows.** `window.game_is_visible` amostra cinco pontos
+dentro da client area e chama `WindowFromPoint` em cada um; se a janela raiz em
+todos eles é a do jogo, a captura vai pegar o jogo. Isso troca uma heurística
+sobre pixels por um fato do sistema operacional, e responde a pergunta certa —
+*o jogo está no topo nos pixels que vou capturar?* — em vez da pergunta errada —
+*eu reconheço o que está desenhado ali?*
+
+Cinco pontos, não um: o centro sozinho deixaria passar um balão de notificação
+cobrindo um canto do frame.
+**A dúvida é explícita.** Sem janela localizada por Win32 (ou fora do Windows),
+`game_is_visible` devolve `None`, e aí a rotulagem cai na checagem por conteúdo
+antiga — com o ponto cego de volta, mas avisando. Melhor que capturar o terminal
+em silêncio.
+**Risco que fica em aberto, agente-side.** `states.detect_state` **levanta
+`NotTheGameError`** quando a assinatura dá `NOT_GAME`. É a mesma confusão entre
+"não é o jogo" e "é uma tela do jogo que eu não reconheço", só que num lugar onde
+o efeito é abortar o turno. Não dá pra dimensionar sem frame real de cada tela —
+`stage_complete` e `game_over` podem ou não cair ali, dependendo do painel. Como
+`stage_complete` é literalmente o objetivo do projeto (zerar a fase 1), esse é o
+motivo mais forte pra rotular esses cinco estados, que agora é possível.

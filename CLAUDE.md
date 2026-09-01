@@ -102,8 +102,12 @@ pare: isso é bug de arquitetura, não prompt mal escrito.
   primeiro plano. Não remover essa checagem sem pôr outra no lugar
 - **Ao criar ponto novo que capture a tela ou emita input, consultar a tabela da
   ADR-076.** O guarda certo depende do que a ferramenta faz: bloquear onde roda
-  sozinho, avisar onde há alguém olhando, checar o conteúdo onde o foco é
-  impossível. Copiar o guarda de outra ferramenta sem reexaminar já deu errado 4x
+  sozinho, avisar onde há alguém olhando, perguntar ao SISTEMA (`game_is_visible`)
+  onde o foco é impossível. Copiar o guarda de outra ferramenta sem reexaminar já
+  deu errado 4x
+- **Guarda não pode depender da CV reconhecer a tela.** A rotulagem recusava
+  capturar menu e loja porque a assinatura dava `NOT_GAME` — ou seja, recusava
+  justamente o material que consertaria o ponto cego. Ver ADR-084
 - **Antes de afinar um detector de CV, olhar a máscara.** Iterar em limiar no
   escuro custa mais que renderizar o overlay e ver o que está sendo pego
 - **Medir antes de decidir.** Todo limiar deste projeto tem número que o

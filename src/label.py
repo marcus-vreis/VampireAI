@@ -38,7 +38,7 @@ from src.vision.hud import read_hp, read_mana
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
 from src.vision.screen import Verdict, signature
-from src.window import find_game_window
+from src.window import find_game_window, game_is_visible
 
 DATASET_DIR = PROJECT_ROOT / "dataset"
 LABELS_FILE = DATASET_DIR / "labels.jsonl"
@@ -329,6 +329,35 @@ def _append(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _pode_capturar() -> bool:
+    """Guarda da rotulagem: o jogo precisa estar VISÍVEL, não reconhecido.
+
+    Quando o Win32 não localiza a janela, `game_is_visible` devolve None — aí
+    não há resposta do sistema e sobra a checagem por conteúdo, que é fraca mas
+    é melhor que nada. Nesse caminho o ponto cego volta, e o aviso diz isso.
+    """
+    visivel = game_is_visible()
+    if visivel is True:
+        return True
+    if visivel is False:
+        logger.error(
+            "A janela do jogo está COBERTA nos pixels que seriam capturados. "
+            "Ponha o jogo e o terminal lado a lado (ou em monitores diferentes) — "
+            "o jogo não precisa estar focado, mas precisa aparecer inteiro."
+        )
+        return False
+    logger.warning(
+        "Janela do jogo não localizada; caindo na checagem por conteúdo, que "
+        "recusa telas que a CV ainda não reconhece (menu, loja, título)."
+    )
+    amostra = grab(state="label_check")
+    fora = signature(cv2.imread(str(amostra))).verdict is Verdict.NOT_GAME
+    amostra.unlink(missing_ok=True)
+    if fora:
+        logger.error("A captura não parece ser o jogo. Ajeite as janelas e tente de novo.")
+    return not fora
+
+
 def capture_labeled(state: str) -> Path | None:
     """Captura o frame atual e move pro dataset. None quando não é o jogo.
 
@@ -338,23 +367,21 @@ def capture_labeled(state: str) -> Path | None:
     é recusada.
 
     **Aqui o foco não serve de guarda**: pra ler a tecla, o terminal precisa
-    estar focado, então o jogo nunca está. O que vale é perguntar se o frame
-    PARECE o jogo — e a assinatura de CV já responde isso.
+    estar focado, então o jogo nunca está. Quem responde é o SISTEMA, via
+    `game_is_visible` — a janela do jogo está no topo nos pixels que vão ser
+    capturados? Sem alguma checagem, um jogo atrás do terminal produziria um
+    dataset inteiro de prints do terminal rotulados como "combate".
 
-    Sem esta checagem, um jogo atrás do terminal produziria um dataset inteiro de
-    prints do terminal rotulados como "combate", e o gabarito que deveria medir o
-    sensor mediria outra coisa.
+    Não dá mais pra perguntar "o frame PARECE o jogo?" à CV, como antes. Aquilo
+    era circular: exigia que a CV reconhecesse a tela, e as telas que mais
+    precisam ser rotuladas são justamente as que ela ainda não reconhece — menu,
+    loja, título, game over. O guarda recusava exatamente o material necessário
+    pra consertar o próprio ponto cego (ADR-084).
     """
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    shot = grab(state=f"label_{state}")
-    if signature(cv2.imread(str(shot))).verdict is Verdict.NOT_GAME:
-        shot.unlink(missing_ok=True)
-        logger.error(
-            "A captura não é o jogo. Deixe a janela do Vampire Crawlers VISÍVEL "
-            "(lado a lado ou em outro monitor) — ela não precisa estar focada, "
-            "mas precisa aparecer na tela."
-        )
+    if not _pode_capturar():
         return None
+    shot = grab(state=f"label_{state}")
     target = DATASET_DIR / shot.name
     shot.replace(target)
     return target
@@ -466,11 +493,8 @@ def session(ask_details: bool) -> int:
         "em outro monitor. Focado ele não vai estar (o terminal precisa do foco\n"
         "pra ler a tecla), e não precisa.\n"
     )
-    if signature(cv2.imread(str(grab(state="label_check")))).verdict is Verdict.NOT_GAME:
-        logger.error(
-            "A captura não está mostrando o jogo. Ajeite as janelas e rode de novo — "
-            "sem isso o dataset inteiro sairia com prints do terminal."
-        )
+    if not _pode_capturar():
+        logger.error("Ajeite as janelas e rode de novo — sem isso o dataset sairia errado.")
         return 2
     if ask_details:
         print(_como_responder())

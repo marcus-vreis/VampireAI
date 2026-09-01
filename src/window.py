@@ -25,6 +25,7 @@ class WindowLookup:
     rect: WindowRect
     source: str  # "win32" | "config"
     foreground: bool = True
+    hwnd: int = 0
 
 
 def _user32():
@@ -80,7 +81,7 @@ def find_game_window(title_substring: str = _TITLE_SUBSTRING) -> WindowLookup:
                 rect = _client_rect_on_screen(u32, hwnd)
                 if rect.w > 0 and rect.h > 0:
                     return WindowLookup(
-                        rect=rect, source="win32", foreground=hwnd == active
+                        rect=rect, source="win32", foreground=hwnd == active, hwnd=hwnd
                     )
         logger.warning("Janela '{}' não encontrada — usando retângulo de config", title_substring)
     except (RuntimeError, OSError) as e:
@@ -137,3 +138,51 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# Pontos amostrados dentro da client area, em fração dela. O centro sozinho não
+# basta: um balão de notificação no canto cobriria parte do frame e passaria.
+_VISIBILITY_PROBES = ((0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75))
+_GA_ROOT = 2
+
+
+def game_is_visible(lookup: WindowLookup | None = None) -> bool | None:
+    """A janela do jogo está de fato NA FRENTE nos pixels que vão ser capturados?
+
+    `mss` captura uma região da tela, então precisa haver alguma garantia de que
+    o jogo não está coberto. O foco não serve pra isso na rotulagem: pra ler a
+    tecla o terminal precisa do foco, então o jogo nunca está focado ali.
+
+    A pergunta é respondida pelo **sistema**, não pelos pixels: `WindowFromPoint`
+    diz qual janela está no topo em cada ponto. Isso substitui a checagem por
+    conteúdo, que caía numa armadilha circular — ela exigia que a CV
+    RECONHECESSE a tela, e as telas que mais precisam ser rotuladas são
+    justamente as que a CV ainda não reconhece (título, menu, loja, game over).
+    Com o guarda antigo, era impossível capturar o material necessário pra
+    consertar o ponto cego.
+
+    Devolve None quando não dá pra saber — sem janela localizada por Win32, ou
+    fora do Windows. Quem chama decide o que fazer com a dúvida.
+    """
+    lookup = lookup or find_game_window()
+    if lookup.source != "win32" or not lookup.hwnd:
+        return None
+    try:
+        u32 = _user32()
+        u32.WindowFromPoint.argtypes = [wintypes.POINT]
+        u32.WindowFromPoint.restype = wintypes.HWND
+        u32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        u32.GetAncestor.restype = wintypes.HWND
+    except (RuntimeError, OSError):
+        return None
+    return all(_probe_belongs_to(u32, lookup, fx, fy) for fx, fy in _VISIBILITY_PROBES)
+
+
+def _probe_belongs_to(u32, lookup: WindowLookup, fx: float, fy: float) -> bool:
+    r = lookup.rect
+    ponto = wintypes.POINT(int(r.x + fx * r.w), int(r.y + fy * r.h))
+    topo = u32.WindowFromPoint(ponto)
+    if not topo:
+        return False
+    raiz = u32.GetAncestor(topo, _GA_ROOT) or topo
+    return int(raiz) == int(lookup.hwnd)
