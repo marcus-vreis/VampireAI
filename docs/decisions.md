@@ -1388,3 +1388,44 @@ comportamento.
 **Sem risco pro BFS:** `_icons_on_floor` recupera pixels de ícone pela FAIXA DE
 TOM (128-146), não por template, então os baús já entravam na área andável antes
 mesmo de existir detector pra eles. Há teste afirmando isso.
+
+## ADR-086: A primeira run de verdade, e o que ela achou em 20 segundos (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** primeira execução real de `src.agent` nesta branch. Toda validação
+até aqui era sobre frame salvo e simulação. A run durou **20 segundos** e abortou
+com "três falhas seguidas", registrada em `logs/runs.jsonl`: 2 passos, 3
+destravamentos, 0 cartas jogadas.
+**Achado 1 — `UnicodeEncodeError` no relatório, a QUARTA vez.** `RunSummary.render`
+usava `"─" * 58` (box-drawing, U+2500). O console do Windows é cp1252 e a
+impressão levantou exceção **depois da run inteira ter acontecido**: o trabalho
+foi feito e o resultado se perdeu no print. Consertado, e desta vez com teste.
+
+A regra existia no CLAUDE.md desde a terceira ocorrência, e regra sem teste é
+sugestão. `tests/test_cp1252.py` percorre o AST de `src/**/*.py` e reprova
+literal de string fora do cp1252 — fazendo a distinção que importa: **docstring e
+comentário nunca são impressos** e podem usar seta à vontade; literal pode acabar
+num `logger`, num `print` ou num help de argparse. Seis literais estavam fora, em
+`agent.py` e `gamepad.py`.
+**Achado 2 — o gamepad virtual funciona, e a hipótese óbvia era falsa.** O
+personagem não se mexeu com dois `dpad_up`. Suspeitei do `boot_delay_s=0.5`,
+curto demais pro Windows enumerar um controle novo. **Medido, e refutado:** com
+processo novo a cada tentativa e `confirm` como sonda, esperas de 0.2s, 0.6s,
+1.2s e 2.5s mudaram 45-48% dos pixels — todas funcionam, inclusive a mais curta.
+Depois, no mesmo processo, `confirm` fechou um modal (71% dos pixels) e
+`dpad_left` moveu o cursor (17%). **O caminho de input está bom.**
+**Achado 3 — o jogo abre um modal bloqueante quando o controle some.** Toda vez
+que um processo do agente termina, o DS4 virtual é destruído e o jogo exibe
+"Nenhum controle detectado — Selecione OK para continuar". Ou seja: **a run
+seguinte sempre começa atrás desse modal.** Isso também invalidou um teste meu
+que rodou com o modal na frente e concluiu errado — `dpad_up` não fecha um painel
+de botão "Ok", e os 3% de mudança que eu vi eram só animação.
+**O que fica em aberto:** por que `dpad_up` não andou, partindo de um mapa limpo.
+`jogo.md:48` confirma que seta-cima é andar pra frente, e o mapeamento do código
+está certo. As hipóteses vivas são hold curto demais pra movimento (0.08s) ou o
+controle ainda não estar atribuído ao jogador no primeiro instante. Testar exige
+o jogo de volta no mapa; não dá pra concluir com o que há.
+**Achado 4 — o pavio do antitravamento é curto demais pra uma primeira run.** Do
+`_get_pad` até abortar foram 2.4s: 2 passos sem mudança, 3 botões de escalonamento,
+3 falhas de turno. Uma run que precisa fechar um modal antes de qualquer coisa não
+tem 2.4s de paciência. Não mexi no número — mexer sem medir é o erro que a
+ADR-037 registrou.

@@ -62,7 +62,7 @@ _MEMORY_RECENT_EVENTS = 8
 _DECISION_RELEVANT = ("combat", "level_up", "chest", "boss_chest", "stage_complete")
 # Transição de tela marca a estrutura da run e é útil no arquivo, mas não diz
 # nada sobre O QUE decidir: "transição → combat" não ajuda a escolher carta.
-_NO_SIGNAL = "transição →"
+_NO_SIGNAL = "transição ->"
 _MAX_ILLEGAL_RETRIES = 2
 # Perder o foco é transitório: você alterna janela, uma notificação rouba o foco.
 # Abortar a run por isso seria desproporcional — esperamos o jogo voltar.
@@ -216,7 +216,7 @@ class RunSummary:
         minutos = (time.monotonic() - self.inicio) / 60
         linhas = [
             "",
-            "─" * 58,
+            "-" * 58,
             f"RESUMO DA RUN — {minutos:.1f} min, {self.passos} passos",
             f"  registrado em:       {RUNS_LOG}",
             f"  telas visitadas:     {dict(self.estados) or '(nenhuma)'}",
@@ -232,7 +232,7 @@ class RunSummary:
             linhas.append(f"  últimas cartas:      {', '.join(self.cartas_jogadas[-6:])}")
         if self.escolhas:
             linhas.append(f"  recompensas:         {', '.join(self.escolhas[-4:])}")
-        linhas.append("─" * 58)
+        linhas.append("-" * 58)
         return "\n".join(linhas)
 
 
@@ -356,7 +356,7 @@ def handle_map(memory: Memory | None = None) -> None:
         return
 
     logger.info(
-        "Mapa: em {} olhando {} → {} (alvo: {})",
+        "Mapa: em {} olhando {} -> {} (alvo: {})",
         minimap.player, minimap.facing.value, step.turn.value, step.reason,
     )
     if step.turn is Turn.BACK:
@@ -563,7 +563,7 @@ def _step(
 
     perceived = perceive(frame_path)
     if perceived.state is not last_state:
-        memory.append(f"transição → {perceived.state.value}", state=perceived.state.value)
+        memory.append(f"transição -> {perceived.state.value}", state=perceived.state.value)
         forget_hand()  # a mão só vale dentro do mesmo combate
     _RUN.passos += 1
     _RUN.estados[perceived.state.value] += 1

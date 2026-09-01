@@ -124,7 +124,7 @@ def test_bloco_ignora_ruido_de_mapa_e_destravamento():
     ruido = _linhas(
         ("map", "mapa: frente rumo a inimigo mais próximo"),
         ("stall", "destravando com confirm"),
-        ("deck", "transição → deck"),
+        ("deck", "transição -> deck"),
     )
     assert _relevant(ruido) == []
 
@@ -141,10 +141,10 @@ def test_bloco_mantem_jogadas_e_escolhas():
 
 
 def test_transicao_nao_informa_decisao():
-    """"transição → combat" não ajuda a escolher carta."""
+    """"transição -> combat" não ajuda a escolher carta."""
     from src.agent import _relevant
 
-    assert _relevant(_linhas(("combat", "transição → combat"))) == []
+    assert _relevant(_linhas(("combat", "transição -> combat"))) == []
 
 
 def test_prosa_do_sumarizador_passa():

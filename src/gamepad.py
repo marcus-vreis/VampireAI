@@ -188,7 +188,7 @@ def _self_test(seconds: float = 1.0) -> None:
     time.sleep(3)
     _avisar_sem_foco()
     for b in sequence:
-        logger.info("→ {}", b.value)
+        logger.info("-> {}", b.value)
         press(b)
         time.sleep(seconds)
 
