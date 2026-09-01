@@ -436,7 +436,10 @@ _VARIEDADE: dict[str, str] = {
     "shop": "com e sem dinheiro pra comprar",
     "chest": "cursor em posições diferentes",
     "boss_chest": "cursor em posições diferentes",
-    "chest_card_target": "mãos de tamanhos diferentes",
+    # "Inserir joia em uma carta": mostra o DECK, não a mão, e aparece tanto
+    # depois do baú quanto depois de um level up com carta de bônus — o nome
+    # `chest_` engana. Marque com [t] nos dois casos.
+    "chest_card_target": "decks de tamanhos diferentes, vindo do baú E do level up",
 }
 
 
