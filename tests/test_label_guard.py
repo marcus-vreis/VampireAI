@@ -55,26 +55,75 @@ def test_a_sessao_nao_comeca_capturando_o_terminal(captura, capsys):
         assert label.session(ask_details=False) == 2
 
 
+def test_toda_pergunta_tem_um_campo_da_cv_do_outro_lado():
+    """A regra que impede a lista de perguntas de inchar. Pergunta sem `cv` custa
+    o tempo de quem responde e não mede nada — vira opinião solta no dataset."""
+    campos_cv = {
+        "cv_verdict",
+        "cv_parchment",
+        "cv_slate",
+        "cv_cards",
+        "cv_cursor",
+        "cv_mana",
+        "cv_hp",
+        "cv_facing",
+        "cv_enemies",
+        "cv_boss",
+    }
+    for estado, perguntas in label._PERGUNTAS.items():
+        for p in perguntas:
+            assert p.cv in campos_cv, f"{estado}.{p.campo} aponta pra {p.cv}, que a CV não produz"
+
+
+def test_o_observed_produz_todos_os_campos_que_as_perguntas_citam(tmp_path):
+    """Fecha o outro lado do contrato acima: o teste anterior olha uma lista
+    escrita à mão, este olha o dicionário que a CV realmente devolve."""
+    frame = label.PROJECT_ROOT / "dataset" / "20260830T135106101_label_combat.png"
+    if not frame.is_file():
+        pytest.skip("frame de referência ausente")
+    observado = set(label._observed(frame))
+    citados = {p.cv for ps in label._PERGUNTAS.values() for p in ps}
+    assert citados <= observado, f"perguntas sem gabarito: {citados - observado}"
+
+
 def test_nenhuma_selecionada_e_resposta_nao_falta():
     """O caso que confundiu na primeira sessão: num combate com o cursor em
     "Finalizar turno" nenhuma carta está levantada. Isso é gabarito válido, e
     tratar como "não respondi" apagaria o caso mais comum de cursor nulo."""
-    with mock.patch.object(label, "input", return_value="n", create=True):
-        valor, respondeu = label._perguntar_selecionada("")
-    assert valor is None and respondeu is True
-
-    with mock.patch.object(label, "input", return_value="", create=True):
-        valor, respondeu = label._perguntar_selecionada("")
-    assert valor is None and respondeu is False
+    assert label._selecionada("n") == (None, True)
+    assert label._selecionada("") == (None, False)
 
 
 def test_a_pergunta_e_1_based_e_o_dado_e_0_based():
     """Contar a partir de 1 é natural pra quem olha a tela; o resto do código
     indexa a partir de 0. A conversão fica aqui, num lugar só."""
-    with mock.patch.object(label, "input", return_value="1", create=True):
-        assert label._perguntar_selecionada("") == (0, True)
-    with mock.patch.object(label, "input", return_value="4", create=True):
-        assert label._perguntar_selecionada("") == (3, True)
+    assert label._selecionada("1") == (0, True)
+    assert label._selecionada("4") == (3, True)
+
+
+def test_hp_vira_lista_e_nao_tupla():
+    """`read_hp` devolve tupla, o JSONL grava lista. Se o rótulo fosse tupla, o
+    frame recarregado do disco compararia (61, 61) com [61, 61] e diria ERROU
+    em cima de dois valores iguais."""
+    assert label._par_hp("61/61") == ([61, 61], True)
+    assert label._par_hp("61") == (None, False)
+
+
+def test_direcao_e_sim_nao():
+    assert label._direcao("n") == ("norte", True)
+    assert label._direcao("o") == ("oeste", True)
+    assert label._direcao("x") == (None, False)
+    assert label._sim_nao("s") == (True, True)
+    assert label._sim_nao("n") == (False, True)
+
+
+def test_perguntas_de_combate_e_de_mapa_sao_diferentes():
+    """Perguntar "quantas cartas" num frame de mapa gastaria o tempo de quem
+    responde num campo que ali não significa nada."""
+    combate = {p.campo for p in label._PERGUNTAS["combat"]}
+    mapa = {p.campo for p in label._PERGUNTAS["map"]}
+    assert "mana" in combate and "mana" not in mapa
+    assert "facing" in mapa and "facing" not in combate
 
 
 def test_rotulo_antigo_sem_flag_ainda_conta_como_resposta():
@@ -83,23 +132,29 @@ def test_rotulo_antigo_sem_flag_ainda_conta_como_resposta():
     antigo = {"hand_size": 6, "cursor": None}
     assert label._sabe(antigo, "hand_size") is True
     assert label._sabe(antigo, "cursor") is False
-
-    novo = {"cursor": None, "cursor_known": True}
-    assert label._sabe(novo, "cursor") is True
+    assert label._sabe({"cursor": None, "cursor_known": True}, "cursor") is True
 
 
 def test_a_acuracia_ignora_frames_sem_gabarito():
     """Um frame sem resposta não é acerto nem erro. Contar como erro puniria a
     CV por uma pergunta que ninguém respondeu."""
+    pergunta = label._PERGUNTAS["combat"][1]
     records = [
         {"cursor": 2, "cursor_known": True, "cv_cursor": 2},
         {"cursor": None, "cursor_known": False, "cv_cursor": 9},
     ]
-    assert "1/1" in label._acuracia(records, "cursor", "cv_cursor")
+    assert "1/1" in label._acuracia(records, pergunta)
+
+
+def test_a_ajuda_sai_da_mesma_tabela_das_perguntas():
+    """Ajuda escrita à mão descreveria a versão anterior das perguntas na
+    primeira vez que alguém mudasse a tabela, e ajuda errada é pior que nenhuma."""
+    texto = label._como_responder()
+    for p in label._PERGUNTAS["combat"]:
+        assert p.campo in texto and p.onde[:20] in texto
 
 
 def test_a_cobertura_diz_o_que_falta():
     """A pergunta "é pra fazer o jogo todo?" precisa ter resposta na tela."""
-    feito = dict.fromkeys(label._META, 99)
-    assert "completa" in label._tabela_cobertura(feito)
+    assert "completa" in label._tabela_cobertura(dict.fromkeys(label._META, 99))
     assert "combat" in label._tabela_cobertura({"combat": 0})

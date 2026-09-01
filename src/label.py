@@ -22,6 +22,8 @@ import collections
 import json
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from src.capture import grab
 from src.config import PROJECT_ROOT
 from src.perception import default_glyphbook, read_hp_hybrid, read_mana_hybrid
 from src.vision.cards import detect_card_slots
+from src.vision.hud import read_hp, read_mana
 from src.vision.icons import find_icons
 from src.vision.minimap import read_minimap
 from src.vision.screen import Verdict, signature
@@ -74,25 +77,167 @@ _META: dict[str, int] = {
     "game_over": 1,
 }
 
-_COMO_RESPONDER = """
-COMO RESPONDER OS DETALHES (só aparecem em combate)
 
-  cartas na mão   conte TODAS as cartas do leque, inclusive as que estão
-                  parcialmente tapadas pela vizinha da esquerda.
+@dataclass(frozen=True)
+class Pergunta:
+    """Uma pergunta de detalhe e o campo da CV que ela serve de gabarito.
 
-  carta levantada a selecionada sobe acima das outras e o círculo de custo dela
-                  fica maior, pulsando entre azul e magenta. Responda contando
-                  da esquerda: 1 = a primeira. Se NENHUMA estiver levantada
-                  (acontece sempre que o cursor está em "Finalizar turno" ou
-                  "Jogar todas"), responda 'n' -- isso é uma resposta correta,
-                  não uma falta.
+    O par `campo`/`cv` é a regra que impede a lista de inchar: só entra pergunta
+    que tem do outro lado um número que a CV já produz. Pergunta sem `cv` vira
+    opinião solta no dataset — custa o tempo de quem responde e não mede nada.
+    """
 
-  Enter em branco significa "não sei", e a pergunta fica sem gabarito.
+    campo: str
+    cv: str
+    texto: str
+    parse: Callable[[str], tuple[object, bool]]
+    onde: str
 
-O palpite da CV só aparece DEPOIS que você responde, de propósito: se aparecesse
-antes você concordaria com ele, e o gabarito passaria a medir a CV contra ela
-mesma.
-"""
+
+def _num(raw: str) -> tuple[object, bool]:
+    return (int(raw), True) if raw.isdigit() else (None, False)
+
+
+def _selecionada(raw: str) -> tuple[object, bool]:
+    """Pergunta em 1-based, grava em 0-based. 'n' = nenhuma selecionada.
+
+    "Nenhuma" é uma RESPOSTA, não uma falta: o cursor sai da mão sempre que o
+    jogador está sobre "Finalizar turno" ou "Jogar todas". Tratar as duas coisas
+    como o mesmo `None` apagaria do gabarito o caso mais comum de
+    `selected_idx is None` — justamente o que precisa ser medido.
+    """
+    if raw in ("n", "nenhuma"):
+        return None, True
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw) - 1, True
+    return None, False
+
+
+def _par_hp(raw: str) -> tuple[object, bool]:
+    """Lista, não tupla: o JSONL grava lista, e comparar tupla com lista dá
+    ERROU em cima de dois valores iguais."""
+    partes = raw.split("/")
+    if len(partes) == 2 and all(p.strip().isdigit() for p in partes):
+        return [int(p) for p in partes], True
+    return None, False
+
+
+def _sim_nao(raw: str) -> tuple[object, bool]:
+    if raw in ("s", "sim"):
+        return True, True
+    if raw in ("n", "nao", "não"):
+        return False, True
+    return None, False
+
+
+def _direcao(raw: str) -> tuple[object, bool]:
+    rumo = {"n": "norte", "s": "sul", "l": "leste", "o": "oeste"}
+    return (rumo[raw[0]], True) if raw and raw[0] in rumo else (None, False)
+
+
+_ESCOLHA = (
+    Pergunta(
+        "offered",
+        "cv_cards",
+        "quantas cartas na oferta?",
+        _num,
+        "as cartas do painel central",
+    ),
+    Pergunta(
+        "cursor",
+        "cv_cursor",
+        "qual está selecionada? (1 = a da esquerda, n = nenhuma)",
+        _selecionada,
+        "aqui a selecionada é a mais ALTA, não a maior",
+    ),
+)
+
+# Estados de escolha: mesmo painel, mesmas duas perguntas.
+_DIALOGOS = ("level_up", "chest", "boss_chest", "chest_card_target", "shop")
+
+_PERGUNTAS: dict[str, tuple[Pergunta, ...]] = {
+    "combat": (
+        Pergunta(
+            "hand_size",
+            "cv_cards",
+            "cartas na mão?",
+            _num,
+            "conte TODAS as do leque, inclusive as tapadas pela vizinha",
+        ),
+        Pergunta(
+            "cursor",
+            "cv_cursor",
+            "carta levantada? (1 = a da esquerda, n = nenhuma)",
+            _selecionada,
+            "a selecionada sobe acima das outras e o círculo de custo dela fica "
+            "maior, pulsando entre azul e magenta",
+        ),
+        Pergunta(
+            "mana",
+            "cv_mana",
+            "mana?",
+            _num,
+            "o número dentro do orbe azul, à direita do leque",
+        ),
+        Pergunta(
+            "hp",
+            "cv_hp",
+            "HP? (atual/máximo, ex.: 61/61)",
+            _par_hp,
+            "os dois números dentro do coração, à esquerda do leque",
+        ),
+    ),
+    "map": (
+        Pergunta(
+            "facing",
+            "cv_facing",
+            "pra onde a seta aponta? (n/s/l/o)",
+            _direcao,
+            "a seta azul do minimapa",
+        ),
+        Pergunta(
+            "enemies",
+            "cv_enemies",
+            "quantas caveiras no minimapa?",
+            _num,
+            "só caveiras; baú, interrogação e o ícone de chefe não contam",
+        ),
+        Pergunta(
+            "boss",
+            "cv_boss",
+            "o ícone de chefe aparece? (s/n)",
+            _sim_nao,
+            "só se estiver visível no minimapa agora",
+        ),
+    ),
+    **dict.fromkeys(_DIALOGOS, _ESCOLHA),
+}
+
+
+def _como_responder() -> str:
+    """O texto de ajuda sai da mesma tabela que faz as perguntas.
+
+    Escrito à mão, ele descreveria a versão anterior das perguntas na primeira
+    vez que alguém mudasse a tabela — e ajuda errada é pior que ajuda nenhuma.
+    """
+    linhas = ["", "O QUE VOU PERGUNTAR, E ONDE OLHAR", ""]
+    for estado, perguntas in _PERGUNTAS.items():
+        if estado in _DIALOGOS and estado != _DIALOGOS[0]:
+            continue
+        titulo = "telas de escolha (level up, baú, loja)" if estado in _DIALOGOS else estado
+        linhas.append(f"  {titulo}")
+        linhas += [f"    {p.campo:10} {p.onde}" for p in perguntas]
+        linhas.append("")
+    linhas += [
+        '  Enter em branco = "não sei": a pergunta fica sem gabarito, e nem conta',
+        "  como acerto nem como erro. Responder errado é pior que pular.",
+        "",
+        "O palpite da CV só aparece DEPOIS que você responde, de propósito: se",
+        "aparecesse antes você concordaria com ele, e o gabarito passaria a medir",
+        "a CV contra ela mesma.",
+        "",
+    ]
+    return "\n".join(linhas)
 
 
 def _menu() -> str:
@@ -110,18 +255,40 @@ def _read_key() -> str:
 
 
 def _observed(frame_path: Path) -> dict:
-    """O que a CV enxerga — gravado junto pra medir divergência depois."""
+    """O que a CV enxerga — gravado junto pra medir divergência depois.
+
+    Mana e HP saem do caminho **local** (`read_mana`/`read_hp`), não do híbrido:
+    o híbrido cai pro modelo quando o glifo é novo, e 800ms por frame travaria a
+    sessão. Pior, ensinaria o livro de glifos a partir de uma captura sem foco —
+    exatamente o que a ADR-074 proíbe. Aqui, algarismo desconhecido vira `None`,
+    que a comparação trata como "a CV não sabe".
+    """
     frame = cv2.imread(str(frame_path))
     sig = signature(frame)
     slots = detect_card_slots(frame)
-    minimap = read_minimap(frame)
+    book = default_glyphbook()
+    hp = read_hp(frame, book)
     return {
         "cv_verdict": sig.verdict.value,
         "cv_parchment": sig.parchment,
         "cv_slate": sig.slate,
         "cv_cards": slots.visible_total,
         "cv_cursor": slots.selected_idx,
-        "cv_facing": minimap.facing.value if minimap else None,
+        "cv_mana": read_mana(frame, book),
+        "cv_hp": list(hp) if hp else None,
+        **_observed_minimap(read_minimap(frame)),
+    }
+
+
+def _observed_minimap(minimap) -> dict:
+    if minimap is None:
+        return {"cv_facing": None, "cv_enemies": None, "cv_boss": None}
+    icones = find_icons(minimap.gray, minimap.arrow_side)
+    contagem = collections.Counter(ic.kind.value for ic in icones)
+    return {
+        "cv_facing": minimap.facing.value,
+        "cv_enemies": contagem.get("inimigo", 0),
+        "cv_boss": contagem.get("chefe", 0) > 0,
     }
 
 
@@ -174,33 +341,13 @@ def registrar(target: Path, state: str, detalhes: dict) -> dict:
     return record
 
 
-def _perguntar_quantidade(prompt: str) -> tuple[int | None, bool]:
-    raw = input(prompt).strip()
-    return (int(raw), True) if raw.isdigit() else (None, False)
-
-
-def _perguntar_selecionada(prompt: str) -> tuple[int | None, bool]:
-    """Pergunta em 1-based, grava em 0-based. 'n' = nenhuma levantada.
-
-    "Nenhuma" é uma RESPOSTA, não uma falta: o cursor sai da mão sempre que o
-    jogador está sobre "Finalizar turno" ou "Jogar todas". Tratar as duas coisas
-    como o mesmo `None` apagaria do gabarito o caso mais comum de
-    `selected_idx is None` — justamente o que precisa ser medido.
-    """
-    raw = input(prompt).strip().lower()
-    if raw in ("n", "nenhuma"):
-        return None, True
-    if raw.isdigit() and int(raw) >= 1:
-        return int(raw) - 1, True
-    return None, False
-
-
-def _perguntar_detalhes() -> dict:
-    mao, mao_ok = _perguntar_quantidade("   cartas na mão? (número, Enter = não sei) ")
-    cur, cur_ok = _perguntar_selecionada(
-        "   carta levantada? (1 = primeira da esquerda, n = nenhuma, Enter = não sei) "
-    )
-    return {"hand_size": mao, "hand_size_known": mao_ok, "cursor": cur, "cursor_known": cur_ok}
+def _perguntar_detalhes(state: str) -> dict:
+    detalhes: dict = {}
+    for p in _PERGUNTAS.get(state, ()):
+        valor, respondeu = p.parse(input(f"   {p.texto} ").strip().lower())
+        detalhes[p.campo] = valor
+        detalhes[f"{p.campo}_known"] = respondeu
+    return detalhes
 
 
 def _sabe(record: dict, campo: str) -> bool:
@@ -210,32 +357,34 @@ def _sabe(record: dict, campo: str) -> bool:
     return record.get(campo) is not None
 
 
-def _confere(record: dict, campo: str, cv: str) -> str:
-    if not _sabe(record, campo):
+def _confere(record: dict, p: Pergunta) -> str:
+    if not _sabe(record, p.campo):
         return ""
-    rotulo, obtido = record.get(campo), record.get(cv)
+    rotulo, obtido = record.get(p.campo), record.get(p.cv)
     marca = "ok" if rotulo == obtido else "ERROU"
-    return f" {campo}={_mostrar(rotulo)} cv={_mostrar(obtido)} {marca}"
+    return f" {p.campo}={_mostrar(rotulo)}/cv={_mostrar(obtido)} {marca}"
 
 
-def _mostrar(v: int | None) -> str:
-    return "nenhuma" if v is None else str(v)
+def _mostrar(v: object) -> str:
+    if v is None:
+        return "nenhuma"
+    if isinstance(v, list):
+        return "/".join(str(x) for x in v)
+    return str(v)
 
 
 def _report(record: dict, feito: collections.Counter) -> None:
-    agree = record["cv_verdict"] in (record["state"], "dialog")
-    mark = "ok " if agree else "DIVERGE"
     estado = record["state"]
-    meta = _META.get(estado, 0)
+    agree = record["cv_verdict"] in (estado, "dialog")
+    detalhes = "".join(_confere(record, p) for p in _PERGUNTAS.get(estado, ()))
     logger.info(
-        "{} rotulado={} cv={}{}{}  [{}/{}]",
-        mark,
+        "{} rotulado={} cv={}{}  [{}/{}]",
+        "ok " if agree else "DIVERGE",
         estado,
         record["cv_verdict"],
-        _confere(record, "hand_size", "cv_cards"),
-        _confere(record, "cursor", "cv_cursor"),
+        detalhes,
         feito[estado],
-        meta,
+        _META.get(estado, 0),
     )
 
 
@@ -269,7 +418,7 @@ def session(ask_details: bool) -> int:
         )
         return 2
     if ask_details:
-        print(_COMO_RESPONDER)
+        print(_como_responder())
     feito = _contagem_gravada()
     print(_tabela_cobertura(feito) + "\n")
     print(_menu())
@@ -288,7 +437,7 @@ def _laco(ask_details: bool, feito: collections.Counter) -> int:
         target = capture_labeled(state)
         if target is None:
             continue
-        detalhes = _perguntar_detalhes() if ask_details and state == "combat" else {}
+        detalhes = _perguntar_detalhes(state) if ask_details else {}
         feito[state] += 1
         _report(registrar(target, state, detalhes), feito)
         total += 1
@@ -350,13 +499,29 @@ def watch(interval_s: float, samples: int) -> int:
     return 0
 
 
-def _acuracia(records: list[dict], campo: str, cv: str) -> str:
-    """Concordância só entre os frames que têm gabarito daquele campo."""
-    com_rotulo = [r for r in records if _sabe(r, campo)]
+def _acuracia(records: list[dict], p: Pergunta) -> str:
+    """Concordância só entre os frames que têm gabarito daquele campo.
+
+    Frame sem resposta não é acerto nem erro: contar como erro puniria a CV por
+    uma pergunta que ninguém respondeu, e contar como acerto inflaria o número.
+    """
+    com_rotulo = [r for r in records if _sabe(r, p.campo)]
     if not com_rotulo:
-        return f"{'-':>10}"
-    ok = sum(1 for r in com_rotulo if r.get(campo) == r.get(cv))
-    return f"{ok:>3}/{len(com_rotulo):<3} {100 * ok / len(com_rotulo):>3.0f}%"
+        return f"{'sem gabarito':>16}"
+    ok = sum(1 for r in com_rotulo if r.get(p.campo) == r.get(p.cv))
+    return f"{ok:>4}/{len(com_rotulo):<4} {100 * ok / len(com_rotulo):>4.0f}%"
+
+
+def _tabela_detalhes(by_state: dict[str, list[dict]]) -> str:
+    """Onde a CV erra, campo por campo. É pra isso que a rotulagem existe."""
+    linhas: list[str] = []
+    for estado, perguntas in _PERGUNTAS.items():
+        rows = by_state.get(estado)
+        if not rows:
+            continue
+        linhas.append(f"\n{estado}")
+        linhas += [f"  {p.campo:12} {_acuracia(rows, p)}" for p in perguntas]
+    return "\n".join(linhas)
 
 
 def summary() -> int:
@@ -377,11 +542,9 @@ def summary() -> int:
         meta = _META.get(state, 0)
         print(f"{state:20} {len(rows):>4} {meta:>5} {100 * agree / len(rows):>11.0f}%")
 
-    combate = by_state.get("combat", [])
-    if combate:
-        print("\nDetalhes de combate (só frames com gabarito):")
-        print(f"  cartas na mão   {_acuracia(combate, 'hand_size', 'cv_cards')}")
-        print(f"  carta levantada {_acuracia(combate, 'cursor', 'cv_cursor')}")
+    detalhes = _tabela_detalhes(by_state)
+    if detalhes.strip():
+        print("\nCV x gabarito, só nos frames com resposta:" + detalhes)
     print("\n" + _tabela_cobertura(collections.Counter({k: len(v) for k, v in by_state.items()})))
     return 0
 
