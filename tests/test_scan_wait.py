@@ -107,3 +107,60 @@ def test_travessia_completa_percorre_a_mao_uma_vez():
     assert scan.mana == 3
     assert scan.hp == (61, 61)
     assert lido is not None
+
+
+# --- entrada na mao --------------------------------------------------------
+# No comeco do turno NENHUMA carta esta levantada: o cursor fica fora do leque,
+# sobre "Finalizar turno". A travessia assumia que ja havia uma selecionada e
+# desistia no passo 0, encerrando o turno sem jogar nada. Ver ADR-088.
+
+
+def test_a_maioria_dos_frames_de_combate_nao_tem_carta_levantada():
+    """A medicao que motivou o conserto: o estado que o codigo assumia como
+    INICIAL era na verdade um estado intermediario que ele mesmo produzia."""
+    import json
+
+    from src.vision.cards import detect_card_slots
+
+    rotulos = _RAIZ / "dataset" / "labels.jsonl"
+    if not rotulos.is_file():
+        pytest.skip("dataset sem rotulos")
+    combates = [
+        json.loads(linha)["file"]
+        for linha in rotulos.read_text(encoding="utf-8").splitlines()
+        if linha.strip() and json.loads(linha)["state"] == "combat"
+    ]
+    if len(combates) < 5:
+        pytest.skip("poucos frames de combate")
+    sem = sum(
+        1
+        for n in combates
+        if detect_card_slots(cv2.imread(str(_RAIZ / "dataset" / n))).selected_idx is None
+    )
+    assert sem > len(combates) / 2, (
+        "se a maioria passasse a ter carta levantada, a premissa do _enter_hand mudou"
+    )
+
+
+def test_entra_na_mao_quando_nenhuma_carta_esta_levantada():
+    """O conserto: em vez de desistir, poe o cursor no leque e so entao percorre."""
+    alvo = CostCircle(x=400, y=500, w=30, h=30)
+    respostas = [(None, None), (None, alvo)]
+    with mock.patch.object(perception, "_tap_and_wait", side_effect=respostas) as tap:
+        _, selected = perception._enter_hand(None)
+    assert selected is alvo
+    assert tap.call_count == 2, "insiste ate o cursor aparecer"
+
+
+def test_desiste_de_entrar_na_mao_depois_de_alguns_toques():
+    """Mao vazia existe: sem teto, a travessia ficaria tocando pra sempre."""
+    with mock.patch.object(perception, "_tap_and_wait", return_value=(None, None)) as tap:
+        _, selected = perception._enter_hand(None)
+    assert selected is None
+    assert tap.call_count == perception._ENTER_HAND_TAPS
+
+
+def test_a_sentinela_faz_qualquer_selecao_contar_como_movimento():
+    """`_tap_and_wait` espera o cursor SAIR de uma posicao. Sem cursor nenhum,
+    nao ha posicao de onde sair — a sentinela resolve isso sem caso especial."""
+    assert perception._NO_CURSOR < -10_000

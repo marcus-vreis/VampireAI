@@ -1476,3 +1476,42 @@ depender de atravessar uma parede, `plan` vai devolver None e o handler anda às
 cegas. Consertar de verdade é rodar a busca em células — não foi feito porque a
 correção aqui já mata o modo de falha observado, e ampliar sem run nova mediria
 nada.
+
+## ADR-088: A travessia da mão exigia um estado que ela mesma produzia (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** com a navegação consertada (ADR-087), a terceira run passou a andar
+pelo mapa, vencer combates e subir de nível. Mas **nenhuma carta foi jogada**: em
+todo combate o log dizia "Sem carta destacada no passo 0 — fim da travessia",
+seguido de "Sem cartas legíveis na mão — finalizando turno".
+**A causa.** `scan_combat_hand` começava assim:
+
+```python
+selected = detect_card_slots(frame).selected
+for step in range(_MAX_HAND):
+    if selected is None:
+        break          # desiste no passo 0
+```
+
+No começo do turno **nenhuma carta está levantada** — o cursor fica fora do
+leque, sobre "Finalizar turno". A travessia assumia que já havia uma carta
+selecionada.
+**A medição que fecha o argumento.** Dos 13 frames de combate do `dataset/`,
+**10 (77%) não têm carta levantada**. E os 3 que têm são todos de sequência
+`card_scan`, ou seja **meio de travessia**: o estado que o código tratava como
+inicial era na verdade um estado intermediário **que ele mesmo produzia**. Nenhum
+frame de início de turno tinha cursor na mão, e ninguém tinha reparado porque o
+conjunto de referência foi colhido durante scans.
+**Decisão:** `_enter_hand` põe o cursor no leque antes de começar. Reusa
+`_tap_and_wait`, que já aperta ← e espera o cursor aparecer — não precisou de
+mecanismo novo, só da chamada que faltava. Três toques de teto, porque mão vazia
+existe e sem teto a travessia tocaria pra sempre.
+**A sentinela.** `_tap_and_wait(previous_x)` espera o cursor SAIR de `previous_x`.
+Sem cursor nenhum não há posição de onde sair, então `_NO_CURSOR = -10**6` faz
+qualquer seleção detectada contar como movimento. Resolve sem caso especial
+dentro da função que já funciona.
+**O teste que protege a premissa**, e não só o código: se a maioria dos frames de
+combate do `dataset/` passar a ter carta levantada, a premissa do `_enter_hand`
+mudou e o teste avisa. Medir a suposição vale mais que medir a implementação.
+**Por que só apareceu agora:** era preciso que a navegação funcionasse pra o
+agente chegar em combate de verdade. As duas runs anteriores abortavam antes,
+batendo na parede. Cada conserto revela o próximo.

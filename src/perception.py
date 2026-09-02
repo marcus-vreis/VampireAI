@@ -126,9 +126,7 @@ def read_mana_hybrid(frame: np.ndarray, book: GlyphBook | None = None) -> int | 
         return None
     pil = Image.fromarray(cv2.cvtColor(orb, cv2.COLOR_BGR2RGB))
     try:
-        result = ask_vlm(
-            None, _load_prompt("read_mana_orb.txt"), schema=_ManaResult, image=pil
-        )
+        result = ask_vlm(None, _load_prompt("read_mana_orb.txt"), schema=_ManaResult, image=pil)
     except RuntimeError as e:
         logger.warning("Leitura de mana falhou: {}", e)
         return None
@@ -139,9 +137,7 @@ def read_mana_hybrid(frame: np.ndarray, book: GlyphBook | None = None) -> int | 
     return value
 
 
-def read_hp_hybrid(
-    frame: np.ndarray, book: GlyphBook | None = None
-) -> tuple[int, int] | None:
+def read_hp_hybrid(frame: np.ndarray, book: GlyphBook | None = None) -> tuple[int, int] | None:
     """HP pelo livro de glifos, caindo pro modelo e ensinando o que ele responder.
 
     Sem este caminho o HP nunca era lido: `read_hp` só consulta o livro, e nada
@@ -159,9 +155,7 @@ def read_hp_hybrid(
         return None
     pil = Image.fromarray(cv2.cvtColor(heart, cv2.COLOR_BGR2RGB))
     try:
-        result = ask_vlm(
-            None, _load_prompt("read_hp_heart.txt"), schema=_HpResult, image=pil
-        )
+        result = ask_vlm(None, _load_prompt("read_hp_heart.txt"), schema=_HpResult, image=pil)
     except RuntimeError as e:
         logger.warning("Leitura de HP falhou: {}", e)
         return None
@@ -202,9 +196,35 @@ def _order_by_position(positions: list[int], final_x: int) -> tuple[list[int], i
     return order, cursor
 
 
-def scan_combat_hand(
-    db: CardDB | None = None, book: GlyphBook | None = None
-) -> HandScan:
+# Quantos toques dar pra tirar o cursor de "Finalizar turno" e por na mao. Tres
+# basta: o cursor entra no leque no primeiro toque quando ha carta.
+_ENTER_HAND_TAPS = 3
+# Sentinela pra _tap_and_wait: qualquer selecao detectada conta como movimento
+# quando ainda nao havia cursor nenhum.
+_NO_CURSOR = -(10**6)
+
+
+def _enter_hand(frame: np.ndarray) -> tuple[np.ndarray, CostCircle | None]:
+    """Poe o cursor na mao antes de comecar a travessia.
+
+    No comeco do turno NENHUMA carta esta levantada — o cursor fica fora do
+    leque, sobre "Finalizar turno". A travessia assumia que ja havia uma carta
+    selecionada e desistia no passo 0, encerrando o turno sem jogar nada.
+
+    Medido nos frames de combate do `dataset/`: **10 de 13 (77%) nao tem carta
+    levantada**. Os 3 que tem sao todos de sequencia `card_scan`, ou seja meio de
+    travessia — o estado que o codigo assumia como inicial era na verdade um
+    estado intermediario que ele mesmo produzia. Ver ADR-088.
+    """
+    for _ in range(_ENTER_HAND_TAPS):
+        frame, selected = _tap_and_wait(_NO_CURSOR)
+        if selected is not None:
+            return frame, selected
+    logger.info("Cursor nao entrou na mao em {} toques — mao vazia?", _ENTER_HAND_TAPS)
+    return frame, None
+
+
+def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) -> HandScan:
     """Percorre a mão com ← lendo uma carta por passo.
 
     Não precisa saber o total antes: a travessia termina sozinha quando o cursor
@@ -220,6 +240,8 @@ def scan_combat_hand(
 
     frame = cv2.imread(str(grab(state="scan_0")))
     selected = detect_card_slots(frame).selected
+    if selected is None:
+        frame, selected = _enter_hand(frame)
     for step in range(_MAX_HAND):
         if mana is None:
             mana = read_mana_hybrid(frame, book)
@@ -239,9 +261,7 @@ def scan_combat_hand(
     if not positions:
         return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp)
     order, cursor = _order_by_position(positions, final_x)
-    return HandScan(
-        cards=[cards[i] for i in order], cursor_idx=cursor, mana=mana, hp=hp
-    )
+    return HandScan(cards=[cards[i] for i in order], cursor_idx=cursor, mana=mana, hp=hp)
 
 
 def read_hud(book: GlyphBook | None = None) -> tuple[int | None, tuple[int, int] | None]:
@@ -309,13 +329,15 @@ def read_choices(frame: np.ndarray, db: CardDB | None = None) -> dict | None:
     opcoes = []
     for i, circle in enumerate(slots.circles):
         card = _read_choice_card(frame, circle, side, db)
-        opcoes.append({
-            "posicao": i,
-            "nome": card.nome,
-            "descricao": card.descricao,
-            "mana": card.mana,
-            "e_bonus": card.tipo == "bonus",
-        })
+        opcoes.append(
+            {
+                "posicao": i,
+                "nome": card.nome,
+                "descricao": card.descricao,
+                "mana": card.mana,
+                "e_bonus": card.tipo == "bonus",
+            }
+        )
     return {
         "opcoes": opcoes,
         "indice_selecionada": slots.selected_idx,
