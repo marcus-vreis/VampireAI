@@ -1543,3 +1543,47 @@ afirma que `plan` devolve None naquele frame. Um teste que só dissesse
 **Onde a run 3 chegou:** 7.0 min, 57 passos, **5 cartas jogadas**, 0 jogadas
 ilegais, 1 recompensa, e terminou por **limite de iterações** — não por abortar.
 As duas anteriores morreram em 20s e 1.4 min batendo na parede.
+
+## ADR-090: O agente contava a mão no meio da animação (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** relatado que "várias vezes o modelo descartou a mão sendo que tinha
+sim muitas cartas", com a hipótese de que o print sai rápido demais e a carta
+ainda não apareceu. **A hipótese estava certa, e os frames provam.**
+**A medição.** Dos 42 frames `scan_0` da run 3 — o primeiro frame de cada
+travessia — **20 (48%) detectaram ZERO círculos**. E os zeros vêm em **rajadas**:
+2, 4, 3 e até 5 capturas seguidas antes de um frame com 6-7 cartas.
+**O frame prova.** `20260901T214903104_combat_mao_em_animacao.png`, versionado no
+`dataset/`, mostra combate com o HUD normal, HP 60/61 com o "1" de dano ainda
+flutuando, e **a mesa vazia com os versos das cartas subindo pelo rodapé**. A CV
+está certa: naquele instante não há carta na mão. O erro é de tempo.
+**Por que virava turno perdido:** sem carta detectada, `scan_combat_hand`
+devolvia mão vazia e `handle_combat` encerrava o turno. Encerrar o turno
+redistribui a mão, o que reinicia a animação — o agente perseguia o próprio
+rabo.
+**Decisão:** `_wait_for_hand` espera a mão assentar antes de contar. **Não é
+`sleep` fixo** — espera o efeito, como a travessia faz desde a ADR-041.
+**E exige a contagem REPETIR, não só aparecer:** um frame no meio da animação já
+mostra algumas cartas, então "achou carta" não é sinal de mão completa. Só um par
+de leituras iguais decide.
+**Zero nunca conta como contagem estável.** Duas leituras de zero seguidas são a
+mesa em animação, que é justamente o caso a evitar. Mão vazia existe — todas as
+cartas jogadas — e quem decide isso é o teto de 3s, nunca a repetição do zero.
+**Achado paralelo, que responde a segunda pergunta ("a contagem está correta?").**
+A contagem está boa: das 21 travessias que leram alguma carta, **16 leram 6**. O
+que é instável é a **leitura** feita pelo VLM. Nas 117 leituras da run:
+
+| carta | custos lidos |
+|---|---|
+| `Gatti Amari` | 1 (16x), **0** (1x) |
+| `Phiera Del` | 3 (6x), **0** (2x) |
+| `Magicatalisador` | None (1x), 0 (4x) |
+| `Desarmamento` | **2** (1x), **4** (1x) |
+
+**4 de 13 cartas tiveram o custo lido de mais de um jeito**, e `Pugnala` saiu com
+4 grafias diferentes. Uma leitura virou `"208 de dano"` como NOME — pedaço da
+descrição. Custo errado faz `combat.validate` aprovar jogada impossível.
+**Isso é a justificativa que faltava pra ADR-080.** Lá eu construí `read_costs`
+mas não liguei ao caminho do `CardDB`, porque havia um frame só de evidência.
+Agora há 117 leituras mostrando o modelo discordar de si mesmo sobre o custo da
+mesma carta. Não liguei ainda — é mudança no caminho de decisão do combate e
+merece a sua própria run pra medir — mas o argumento deixou de ser teórico.

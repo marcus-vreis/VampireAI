@@ -88,8 +88,14 @@ def test_desiste_no_teto_quando_o_cursor_nunca_anda():
 
 
 def test_travessia_completa_percorre_a_mao_uma_vez():
-    """A travessia para sozinha ao voltar a uma carta já vista — sem saber o total."""
-    fonte = FonteDeFrames(SEQUENCIA + [SEQUENCIA[-1]])
+    """A travessia para sozinha ao voltar a uma carta já vista — sem saber o total.
+
+    O primeiro frame vem duplicado porque `_wait_for_hand` consome um PAR de
+    capturas antes de começar: ele espera a contagem repetir, que é como distingue
+    a mão assentada da mesa em animação (ADR-090). A travessia em si continua
+    gastando um frame por carta.
+    """
+    fonte = FonteDeFrames([SEQUENCIA[0]] + SEQUENCIA + [SEQUENCIA[-1]])
     lido = CostCircle(x=0, y=0, w=20, h=20)
     with (
         mock.patch.object(perception, "grab", fonte),
@@ -164,3 +170,56 @@ def test_a_sentinela_faz_qualquer_selecao_contar_como_movimento():
     """`_tap_and_wait` espera o cursor SAIR de uma posicao. Sem cursor nenhum,
     nao ha posicao de onde sair — a sentinela resolve isso sem caso especial."""
     assert perception._NO_CURSOR < -10_000
+
+
+# --- animacao de distribuicao ----------------------------------------------
+# O jogo distribui a mao com animacao: as cartas voam de baixo pra cima. Capturar
+# durante isso mostra a mesa vazia. Medido nos frames da run 3: 20 de 42 inicios
+# de travessia (48%) pegaram a mesa em animacao. Ver ADR-090.
+
+
+def _slots(n, selected=None):
+    circles = [CostCircle(x=300 + 100 * i, y=500, w=22, h=22) for i in range(n)]
+    return perception.CardSlots(circles=circles, selected_idx=selected)
+
+
+def test_espera_a_contagem_REPETIR_nao_so_aparecer():
+    """Um frame no meio da animacao ja mostra algumas cartas. "Achou carta" nao
+    basta como sinal de que a mao assentou -- a contagem tem que estabilizar."""
+    leituras = [_slots(0), _slots(2), _slots(5), _slots(6), _slots(6)]
+    with (
+        mock.patch.object(perception, "grab", return_value=Path("x.png")),
+        mock.patch.object(perception.cv2, "imread", return_value=None),
+        mock.patch.object(perception, "detect_card_slots", side_effect=leituras),
+    ):
+        _, slots = perception._wait_for_hand()
+    assert slots.visible_total == 6, "parou na primeira contagem que se repetiu"
+
+
+def test_desiste_quando_a_mao_esta_mesmo_vazia():
+    """Mao vazia existe -- todas as cartas jogadas. Sem teto o agente travaria
+    esperando cartas que nao vem."""
+    with (
+        mock.patch.object(perception, "grab", return_value=Path("x.png")),
+        mock.patch.object(perception.cv2, "imread", return_value=None),
+        mock.patch.object(perception, "detect_card_slots", return_value=_slots(0)),
+        mock.patch.object(perception, "_HAND_DEAL_TIMEOUT_S", 0.05),
+    ):
+        _, slots = perception._wait_for_hand()
+    assert slots.visible_total == 0
+
+
+def test_zero_nunca_conta_como_contagem_estavel():
+    """Duas leituras de zero seguidas sao a mesa em animacao, nao mao vazia --
+    e exatamente o caso que fazia o agente encerrar o turno com a mao cheia.
+    So o teto decide que a mao esta vazia, nunca a repeticao do zero."""
+    with (
+        mock.patch.object(perception, "grab", return_value=Path("x.png")),
+        mock.patch.object(perception.cv2, "imread", return_value=None),
+        mock.patch.object(
+            perception, "detect_card_slots", side_effect=[_slots(0)] * 3 + [_slots(6), _slots(6)]
+        ),
+        mock.patch.object(perception, "_HAND_DEAL_TIMEOUT_S", 5.0),
+    ):
+        _, slots = perception._wait_for_hand()
+    assert slots.visible_total == 6, "atravessou tres zeros ate a mao assentar"

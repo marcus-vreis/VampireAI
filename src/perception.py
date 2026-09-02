@@ -31,6 +31,7 @@ from src.llm import ask_vlm
 from src.schemas import CardScanFrame, ChestState, LevelUpState, ShopState
 from src.states import GameState, detect_state
 from src.vision.cards import (
+    CardSlots,
     CostCircle,
     card_bbox,
     detect_card_slots,
@@ -196,6 +197,46 @@ def _order_by_position(positions: list[int], final_x: int) -> tuple[list[int], i
     return order, cursor
 
 
+# Teto de espera pela mao terminar de ser distribuida. So e atingido quando a mao
+# esta realmente vazia -- todas as cartas jogadas, ou o turno acabando.
+_HAND_DEAL_TIMEOUT_S = 3.0
+
+
+def _wait_for_hand() -> tuple[np.ndarray, CardSlots]:
+    """Espera as cartas TERMINAREM de entrar antes de contar.
+
+    O jogo distribui a mao com animacao: as cartas voam de baixo pra cima e levam
+    cerca de um segundo pra assentar. Capturar durante isso mostra a mesa vazia,
+    e o agente encerrava o turno achando que nao tinha carta nenhuma.
+
+    Medido nos frames da run 3: **20 de 42 inicios de travessia (48%) pegaram a
+    mesa em animacao**, em rajadas de ate 5 capturas seguidas. Um frame do meio
+    de uma rajada mostra a mesa vazia com os versos das cartas ainda subindo.
+
+    Nao e `sleep` fixo -- espera o EFEITO, como a travessia faz desde a ADR-041.
+    E exige a contagem REPETIR: um frame no meio da animacao ja mostra algumas
+    cartas, entao "achou carta" nao basta como sinal de que a mao assentou.
+    """
+    inicio = time.monotonic()
+    deadline = inicio + _HAND_DEAL_TIMEOUT_S
+    anterior = -1
+    while True:
+        frame = cv2.imread(str(grab(state="scan_0")))
+        slots = detect_card_slots(frame)
+        n = slots.visible_total
+        if n and n == anterior:
+            logger.debug(
+                "mao assentou em {:.0f}ms com {} cartas", 1000 * (time.monotonic() - inicio), n
+            )
+            return frame, slots
+        if time.monotonic() >= deadline:
+            logger.info(
+                "Mao nao assentou em {:.1f}s (ultima contagem: {})", _HAND_DEAL_TIMEOUT_S, n
+            )
+            return frame, slots
+        anterior = n
+
+
 # Quantos toques dar pra tirar o cursor de "Finalizar turno" e por na mao. Tres
 # basta: o cursor entra no leque no primeiro toque quando ha carta.
 _ENTER_HAND_TAPS = 3
@@ -238,9 +279,9 @@ def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) ->
     hp: tuple[int, int] | None = None
     final_x = 0
 
-    frame = cv2.imread(str(grab(state="scan_0")))
-    selected = detect_card_slots(frame).selected
-    if selected is None:
+    frame, slots = _wait_for_hand()
+    selected = slots.selected
+    if selected is None and slots.visible_total:
         frame, selected = _enter_hand(frame)
     for step in range(_MAX_HAND):
         if mana is None:
