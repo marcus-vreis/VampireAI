@@ -326,11 +326,25 @@ def test_todo_frente_aponta_pra_piso(nome):
         assert cell_ahead_walkable(mm, mm.facing), f"{nome} manda andar contra parede"
 
 
-def test_a_celula_mede_19px_nas_duas_fases():
-    """Medido nos 10 mapas do dataset: a moda dos trechos andaveis e 19px em
-    TODOS, fases 1/4 e 2/4, mesmo com a seta variando entre 15 e 16px. O zoom
-    muda o desenho da seta, nao o grid -- por isso a constante nao e derivada
-    do tamanho da seta."""
-    from src.vision.minimap import _CELL_PX
+def test_a_sonda_nao_usa_o_passo_real_do_jogador():
+    """A constante e a largura do PISO (19px), nao o passo do jogador (30px).
 
-    assert _CELL_PX == 19
+    Medido em 4 movimentos reais de uma run: o passo e 30-31px. Sondar nessa
+    distancia parece o certo e e PIOR -- cai na faixa de parede entre pisos.
+    Este teste guarda o valor E o motivo, pra ninguem "consertar" pra 30.
+    """
+    import src.vision.minimap as mmod
+
+    assert mmod._PROBE_PX == 19
+
+    caminho = _DATASET / "20260901T193925141_label_map.png"
+    if not caminho.is_file():
+        pytest.skip("frame ausente")
+    mm = read_minimap(cv2.imread(str(caminho)))
+    original = mmod._PROBE_PX
+    try:
+        mmod._PROBE_PX = 30
+        assert plan(mm) is None, "sondar a 30px reprova as 4 direcoes neste frame"
+    finally:
+        mmod._PROBE_PX = original
+    assert plan(mm) is not None, "a 19px ha caminho"

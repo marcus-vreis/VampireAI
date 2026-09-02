@@ -1515,3 +1515,31 @@ mudou e o teste avisa. Medir a suposição vale mais que medir a implementação
 **Por que só apareceu agora:** era preciso que a navegação funcionasse pra o
 agente chegar em combate de verdade. As duas runs anteriores abortavam antes,
 batendo na parede. Cada conserto revela o próximo.
+
+## ADR-089: A sonda de parede não usa o passo do jogador (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** a ADR-087 fixou a sonda de parede em 19px chamando isso de "lado da
+célula". A terceira run desmentiu o nome: extraindo as posições do log, os
+deslocamentos reais foram **30, 31, 30, 31px** — mediana 30. O passo do jogador é
+30px, não 19.
+**A tentação, e por que ela está errada.** O natural seria corrigir a constante
+pro passo real. Testado nos 11 mapas do `dataset/`:
+
+| sonda | resultado |
+|---|---|
+| 19px | plano em todos os 11 frames; o frame da parede dá `esquerda` |
+| **30px** | `plan=None` em 2 frames, e num mapa da fase 2 **reprova as quatro direções** |
+
+O jogador não está cercado nesse frame. Sondar no passo real cai **na faixa de
+parede que separa os pisos** — os 19px são a largura do PISO desenhado dentro de
+uma célula de ~30px, e a sonda precisa cair no piso do vizinho, não no centro
+geométrico dele.
+**Decisão:** manter 19px e **renomear pra `_PROBE_PX`**. `_CELL_PX` afirmava algo
+falso — que 19 era o lado da célula — e o próximo a ler o código "consertaria"
+pro passo medido, quebrando a navegação com a melhor das intenções.
+**O teste guarda a alternativa que falha**, não só o valor: ele força 30px e
+afirma que `plan` devolve None naquele frame. Um teste que só dissesse
+`_PROBE_PX == 19` não explicaria nada a quem quisesse mudar.
+**Onde a run 3 chegou:** 7.0 min, 57 passos, **5 cartas jogadas**, 0 jogadas
+ilegais, 1 recompensa, e terminou por **limite de iterações** — não por abortar.
+As duas anteriores morreram em 20s e 1.4 min batendo na parede.

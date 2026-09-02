@@ -222,10 +222,16 @@ def _bfs_step(mm: Minimap, target: tuple[int, int]) -> tuple[int, int] | None:
     return (node[0] * s, node[1] * s)
 
 
-# Lado da célula do minimapa. Medido nos 10 mapas do `dataset/`, fases 1/4 e 2/4:
-# a moda dos trechos andáveis é 19px em TODOS, mesmo com a seta do jogador
-# variando entre 15 e 16px — o zoom muda o desenho da seta, não o grid.
-_CELL_PX = 19
+# Distância em que se sonda parede à frente. NÃO é o passo do jogador: medido em
+# 4 movimentos reais de uma run, o passo é 30-31px (mediana 30). 19px é a largura
+# do PISO desenhado dentro da célula — moda dos trechos andáveis nos 10 mapas do
+# `dataset/`, idêntica nas fases 1/4 e 2/4 mesmo com a seta variando 15-16px.
+#
+# Sondar no passo real (30px) foi testado e é PIOR: cai na faixa de parede que
+# separa os pisos, e num dos mapas da fase 2 reprova as quatro direções, com
+# `plan` devolvendo None num frame onde há caminho. A sonda tem que cair no piso
+# do vizinho, não no centro geométrico dele. Ver ADR-087.
+_PROBE_PX = 19
 
 _STEP = {
     Facing.NORTH: (0, -1),
@@ -247,7 +253,7 @@ def cell_ahead_walkable(mm: Minimap, facing: Facing) -> bool:
     """
     dx, dy = _STEP[facing]
     px, py = mm.player
-    x, y = px + dx * _CELL_PX, py + dy * _CELL_PX
+    x, y = px + dx * _PROBE_PX, py + dy * _PROBE_PX
     h, w = mm.walkable.shape
     if not (0 <= x < w and 0 <= y < h):
         return False
