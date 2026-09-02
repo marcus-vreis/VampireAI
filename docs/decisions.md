@@ -1429,3 +1429,50 @@ o jogo de volta no mapa; não dá pra concluir com o que há.
 3 falhas de turno. Uma run que precisa fechar um modal antes de qualquer coisa não
 tem 2.4s de paciência. Não mexi no número — mexer sem medir é o erro que a
 ADR-037 registrou.
+
+## ADR-087: O BFS validava o passo a 3px, e a célula tem 19 (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** a segunda run real fez o resto do loop funcionar — dispensou um
+aviso empilhado, escolheu duas recompensas, aprendeu duas cartas — e travou no
+mesmo lugar que a primeira: **andando contra parede até o antitravamento
+abortar**. Duas runs, dois pontos diferentes, o mesmo padrão: **girar funciona,
+andar não.**
+**A medição que fechou o caso.** No frame da falha, jogador em (124,39) olhando
+sul:
+
+| distância ao sul | andável? | cinza |
+|---|---|---|
+| 8px | **sim** | 200 (piso) |
+| 16px, 24px, 32px | não | 164-169 |
+
+A faixa andável na coluna do jogador vai de y=30 a y=48 — **19px, uma célula** —
+e o jogador está no centro dela, a 9px da parede.
+**A causa raiz.** `_bfs_step` roda num grid subamostrado por `_SEARCH_STRIDE`,
+que é **3px**. `direction_to` derivava a direção do deslocamento desse passo. Um
+passo de 3px cai **dentro da célula onde o jogador já está**, que obviamente é
+piso — então a resposta "dá pra andar pra lá" era sobre um ponto que não é o
+destino. O BFS validava o movimento a **1/6 da distância real**.
+**A célula é 19px, e é constante.** Medido nos 10 mapas do `dataset/`: a moda dos
+trechos andáveis é 19px em TODOS, fases 1/4 e 2/4, mesmo com a seta do jogador
+variando entre 15 e 16px. **O zoom muda o desenho da seta, não o grid** — por
+isso `_CELL_PX` é constante e não derivada do tamanho da seta, que teria sido a
+escolha natural e errada.
+**Decisão:** `cell_ahead_walkable` verifica a célula INTEIRA na direção
+pretendida, e `direction_to` recusa qualquer direção cujo destino seja parede.
+
+Uma primeira tentativa checou só quando a resposta seria `FORWARD`. Não bastou:
+no frame da falha o BFS queria norte, que também é parede, e o resultado virou
+`atras` — girar 180° pra encarar outra parede. Validar a direção PRETENDIDA, e
+não só o ato de andar, faz o plano cair pra `esquerda`, que aponta pro leste, que
+é piso. **Girar continua livre; girar nunca bate.**
+**Invariante instalada e testada:** se o plano é ANDAR, a célula inteira à frente
+é piso. Vale nos 8 mapas da fase 1 e no frame da falha.
+**O frame da falha foi versionado** em `dataset/` — veio de `frames/`, que é
+gitignored e rotacionado durante a run, então um teste que dependesse dele
+passaria a pular em silêncio.
+**O que isso não conserta:** o BFS continua planejando a ROTA num grid de 3px.
+Recusar um passo ruim é diferente de planejar em células. Se a rota inteira
+depender de atravessar uma parede, `plan` vai devolver None e o handler anda às
+cegas. Consertar de verdade é rodar a busca em células — não foi feito porque a
+correção aqui já mata o modo de falha observado, e ampliar sem run nova mediria
+nada.

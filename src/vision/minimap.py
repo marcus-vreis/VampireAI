@@ -222,19 +222,58 @@ def _bfs_step(mm: Minimap, target: tuple[int, int]) -> tuple[int, int] | None:
     return (node[0] * s, node[1] * s)
 
 
+# Lado da célula do minimapa. Medido nos 10 mapas do `dataset/`, fases 1/4 e 2/4:
+# a moda dos trechos andáveis é 19px em TODOS, mesmo com a seta do jogador
+# variando entre 15 e 16px — o zoom muda o desenho da seta, não o grid.
+_CELL_PX = 19
+
+_STEP = {
+    Facing.NORTH: (0, -1),
+    Facing.SOUTH: (0, 1),
+    Facing.EAST: (1, 0),
+    Facing.WEST: (-1, 0),
+}
+
+
+def cell_ahead_walkable(mm: Minimap, facing: Facing) -> bool:
+    """A célula inteira à frente é piso?
+
+    `_bfs_step` responde num grid de `_SEARCH_STRIDE` (3px), um SEXTO da célula.
+    Perguntar a ele "dá pra andar pra frente?" é perguntar sobre um ponto DENTRO
+    da célula onde o jogador já está — que obviamente é piso. Foi assim que duas
+    runs reais mandaram andar contra parede até o antitravamento abortar: em
+    (63,39) olhando leste e em (124,39) olhando sul, com a faixa andável medindo
+    19px e o jogador a 9px da parede. Ver ADR-087.
+    """
+    dx, dy = _STEP[facing]
+    px, py = mm.player
+    x, y = px + dx * _CELL_PX, py + dy * _CELL_PX
+    h, w = mm.walkable.shape
+    if not (0 <= x < w and 0 <= y < h):
+        return False
+    return bool(mm.walkable[y, x])
+
+
 def direction_to(mm: Minimap, target: tuple[int, int]) -> Turn | None:
-    """Para onde virar/andar pra avançar rumo ao alvo. None se não há caminho."""
+    """Para onde virar/andar pra avançar rumo ao alvo. None se não há caminho.
+
+    Girar é sempre seguro, então a checagem de parede só se aplica quando a
+    resposta seria ANDAR: aí a célula à frente precisa ser piso de verdade.
+    """
     step = _bfs_step(mm, target)
     if step is None:
         return None
     dx, dy = step[0] - mm.player[0], step[1] - mm.player[1]
     if dx == 0 and dy == 0:
-        return Turn.FORWARD
-    want = (
-        (Facing.EAST if dx > 0 else Facing.WEST)
-        if abs(dx) >= abs(dy)
-        else (Facing.SOUTH if dy > 0 else Facing.NORTH)
-    )
+        want = mm.facing
+    else:
+        want = (
+            (Facing.EAST if dx > 0 else Facing.WEST)
+            if abs(dx) >= abs(dy)
+            else (Facing.SOUTH if dy > 0 else Facing.NORTH)
+        )
+    if not cell_ahead_walkable(mm, want):
+        return None
     return relative_turn(mm.facing, want)
 
 

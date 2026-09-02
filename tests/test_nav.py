@@ -272,3 +272,65 @@ def test_os_baus_entram_na_area_andavel():
     assert (tpl >= _ICON_LO).any() and (tpl <= _ICON_HI).any(), (
         "o tom do bau precisa cair na faixa que _icons_on_floor recupera"
     )
+
+
+# --- andar contra parede ---------------------------------------------------
+# Frame de uma run REAL (21:32:26), versionado porque frames/ e gitignored. O
+# agente estava em (124,39) olhando sul, o BFS mandou "frente", e o personagem
+# ficou batendo na parede ate o antitravamento abortar a run.
+_PAREDE = "20260901T213226897_map_parede_ao_sul.png"
+
+
+def _mapa(nome):
+    caminho = _DATASET / nome
+    if not caminho.is_file():
+        pytest.skip(f"frame ausente: {nome}")
+    mm = read_minimap(cv2.imread(str(caminho)))
+    assert mm is not None, "minimapa nao localizado"
+    return mm
+
+
+def test_a_celula_a_frente_e_medida_inteira_nao_a_3px():
+    """A causa raiz: `_bfs_step` responde num grid de 3px, um SEXTO da celula de
+    19px. Perguntar a ele "da pra andar pra frente?" e perguntar sobre um ponto
+    DENTRO da celula onde o jogador ja esta -- que obviamente e piso."""
+    from src.vision.minimap import Facing, cell_ahead_walkable
+
+    mm = _mapa(_PAREDE)
+    assert mm.player == (124, 39) and mm.facing is Facing.SOUTH
+    assert not cell_ahead_walkable(mm, Facing.SOUTH), "era a parede em que ele batia"
+    assert not cell_ahead_walkable(mm, Facing.NORTH)
+    assert cell_ahead_walkable(mm, Facing.EAST), "corredor leste-oeste"
+    assert cell_ahead_walkable(mm, Facing.WEST)
+
+
+def test_nao_manda_mais_andar_contra_a_parede():
+    """A regressao da run real: aqui `plan` devolvia `frente`."""
+    from src.vision.minimap import Turn
+
+    plano = plan(_mapa(_PAREDE))
+    assert plano is not None, "ha caminho: leste e oeste sao piso"
+    assert plano.turn is not Turn.FORWARD
+    assert plano.turn is Turn.LEFT, "olhando sul, virar a esquerda aponta pro leste, que e piso"
+
+
+@pytest.mark.parametrize("nome", _MAPAS_FASE1 + (_PAREDE,))
+def test_todo_frente_aponta_pra_piso(nome):
+    """A invariante que o conserto instala: se o plano e ANDAR, a celula inteira
+    a frente tem que ser piso. Girar continua livre -- girar nunca bate."""
+    from src.vision.minimap import Turn, cell_ahead_walkable
+
+    mm = _mapa(nome)
+    plano = plan(mm)
+    if plano is not None and plano.turn is Turn.FORWARD:
+        assert cell_ahead_walkable(mm, mm.facing), f"{nome} manda andar contra parede"
+
+
+def test_a_celula_mede_19px_nas_duas_fases():
+    """Medido nos 10 mapas do dataset: a moda dos trechos andaveis e 19px em
+    TODOS, fases 1/4 e 2/4, mesmo com a seta variando entre 15 e 16px. O zoom
+    muda o desenho da seta, nao o grid -- por isso a constante nao e derivada
+    do tamanho da seta."""
+    from src.vision.minimap import _CELL_PX
+
+    assert _CELL_PX == 19
