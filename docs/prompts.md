@@ -1,62 +1,70 @@
-# Convenções de prompt
+# Prompts
 
-VLM local (Qwen2.5-VL 7B) requer prompts mais rígidos que API top-tier. Aprendizados consolidados aqui.
+Convenções e inventário. Ler antes de mexer em qualquer arquivo de
+`src/prompts/`.
 
-## Idioma
-Sempre PT-BR. UI do jogo é em português; usar termos exatos.
+## Princípios
 
-## Regras universais
-1. **Transcrição literal.** "transcreva exatamente como aparece, sem corrigir ortografia, traduzir ou substituir sinônimos". Sem isso, o modelo "corrige" Espinafre → Espinácea.
-2. **Contagem rigorosa.** "conte cada carta visível, mesmo as parcialmente cobertas atrás de outras".
-3. **Marcação de incerteza.** "use null para número ilegível, ? para texto ilegível". Melhor incerteza que alucinação.
-4. **Schema explícito no prompt.** Sempre mostrar o JSON esperado no prompt.
-5. **Sem prosa antes do JSON.** "Responda APENAS com o JSON".
+- **PT-BR.** A UI do jogo é em português; pedir tradução acrescenta um passo onde
+  o modelo erra.
+- **Transcrição literal.** Qwen2.5-VL "corrige" nomes que não conhece. Todo
+  prompt de leitura diz explicitamente para não corrigir ortografia.
+- **Schema no final, JSON puro.** Toda saída é validada por pydantic
+  (`src/schemas.py`). Prompt sem schema explícito produz markdown em volta do
+  JSON.
+- **Uma pergunta por prompt.** Prompts que pedem várias coisas degradam em todas.
 
-## Padrões específicos do gamepad
+## O que o VLM ainda faz
 
-### Combat — "carta selecionada"
-A carta selecionada é a **maior / mais à frente / em destaque**. Cada prompt de combate exige `selecionada: true` para exatamente UMA carta, e `indice_selecionada` igual à posição dela.
+Depois da ADR-022 a percepção geométrica saiu do modelo. Restaram:
 
-### Card scan — uma carta isolada
-`card_scan.txt` recebe um print onde a carta destacada ocupa quase a tela inteira. Prompt curtíssimo: nome, mana, descrição, tipo. Sem contexto da mão completa.
+| Prompt | Quando | Custo típico |
+|---|---|---|
+| `card_scan.txt` | carta que ainda não está no `CardDB` | 1 chamada por carta nova |
+| `detect_dialog.txt` | CV disse "é tela de escolha", falta saber qual | raro |
+| `detect_other.txt` | CV não reconheceu a tela | raro |
+| `level_up.txt` | ler as opções de recompensa | 1 por level up |
+| `chest.txt`, `chest_card_target.txt` | ler opções do baú | 1 por baú |
+| `combat_decide.txt` | escolher a jogada | 1-3 por jogada (ver validação) |
+| `read_mana_orb.txt` | só se o Tesseract não estiver instalado | 0 ou 1 por turno |
 
-### Map — pergunta mínima
-`map.txt` reduz o problema à pergunta mais fácil possível: "o alvo está à frente, esquerda, direita ou atrás?" (5 opções, incluindo `no_alvo`). Nada de contar paredes ou ler mini-mapa em detalhe.
+### Removidos
 
-### Decisão (combat_decide)
-Prompt do estrategista é texto puro (sem imagem) que recebe JSON do estado + JSON do scan. Modelo devolve UMA ação. Princípio: erros não acumulam — próxima captura corrige.
+Estes prompts foram **apagados**, não arquivados: um prompt que descreve uma
+abordagem aposentada engana quem lê o diretório. O motivo de cada aposentadoria
+está na ADR correspondente, e o conteúdo está no histórico do git.
 
-## Estrutura padrão
-```
-[contexto + mecânica do gamepad]
-[regras de transcrição literal]
-[schema JSON inline]
-[instrução "responda APENAS JSON"]
-```
+| Arquivo | Substituído por | ADR |
+|---|---|---|
+| `count_cards.txt` | CV + travessia da mão | ADR-019, ADR-024 |
+| `map.txt` | BFS sobre o minimapa | ADR-017 |
+| `detect_state.txt` | `detect_dialog` + `detect_other`, com a CV restringindo o subgrupo antes | ADR-022 |
+| `combat.txt` | percepção de combate por CV | ADR-022 |
 
-## Validação
-Toda saída de VLM passa por pydantic (`src/schemas.py`). 3 falhas seguidas → abortar turno (`_MAX_PARSE_FAILS` em `agent.py`).
+## Perguntas restritas
 
-## Multi-amostra para contagem
-`count_cards.txt` é chamado K vezes (`PERCEPTION_COUNT_SAMPLES`, default 3) sobre o mesmo crop pré-processado (contraste/saturação/nitidez via `ImageEnhance`). O total final é o **mode** das K amostras; o índice idem dentro do total vencedor. Com isso o erro ±1 do VLM cai pra <1% em cartas de 3-7. Ver `_vote_count` em `src/perception.py`.
+`detect_dialog.txt` e `detect_other.txt` existem porque a CV já eliminou a maior
+parte do espaço de resposta antes de o modelo ser chamado. Perguntar "qual destas
+5 telas de escolha é" acerta muito mais que "qual destes 12 estados é" — e o
+prompt pode gastar seu espaço em dicas discriminativas em vez de listar opções.
 
-Tunables (`PerceptionConfig`):
-- `PERCEPTION_ENHANCE_CONTRAST` (1.25) — separa fundo do leque das cartas.
-- `PERCEPTION_ENHANCE_SATURATION` (1.4) — destaca a bolinha cyan da mana.
-- `PERCEPTION_ENHANCE_SHARPNESS` (1.2) — bordas dos números brancos.
+## Correção importante
 
-Para inspecionar visualmente o realce: `python -m src.perception --frame F.png --crop hand_area --enhance` salva `frames/crop_hand_area_enhanced.png`.
-
-## OCR auxiliar (status: pendente)
-Após o pivô gamepad, OCR de HP/mana globais ficou no roadmap mas ainda não está
-implementado em `perception.py`. As regiões em `OCR_REGIONS` permanecem como
-placeholders (`(-1, -1, -1, -1)`). Hoje a percepção de combate usa apenas crops
-para VLM (`hand_area`, `mana_orb`). HP do jogador não é lido — fica como TODO.
-
-Cartas isoladas: VLM (porque o custo de mana fica grande no print da carta destacada).
+`card_scan.txt` pedia o custo no *"canto superior direito"*. Nos frames o círculo
+de custo está sempre no canto superior **esquerdo**. O modelo procurava num lugar
+vazio e inventava número. Corrigido em 2026-08-29.
 
 ## Memória injetada nas decisões
-A partir de 2026-05-03, prompts de decisão (`combat_decide`, `level_up`, `chest`)
-recebem o resumo accordion + últimos 8 eventos de `notes/notes.md`. Implementado
-em `agent._memory_block`. Permite que a estratégia "preserve HP, evite cartas
-redundantes" se acumule entre turnos.
+
+`combat_decide` e as escolhas de level up / baú recebem o resumo accordion +
+últimos 8 eventos da `Memory`, formatados por `agent._memory_block`. Ver ADR-020.
+
+## Validação da jogada
+
+`combat_decide.txt` roda dentro de um laço (`agent._decide_combat`): se a carta
+escolhida não cabe na mana ou o índice não existe, o prompt é reenviado com o
+motivo da recusa anexado. Após 2 tentativas, o código joga pela regra de
+`jogo.md`. Ver ADR-026.
+
+Isso significa que **mexer neste prompt afeta a taxa de rejeição**, que é a
+métrica de qualidade do modelo. Registrar o antes e depois ao alterar.

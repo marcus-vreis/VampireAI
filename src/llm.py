@@ -8,7 +8,7 @@ import io
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,22 @@ from pydantic import BaseModel, ValidationError
 from src.config import LLM, LLM_LOG_FILE, PATHS
 
 _client: OpenAI | None = None
+
+
+class ModelUnavailableError(RuntimeError):
+    """O servidor responde mas o modelo não roda. Repetir não adianta."""
+
+# Guardar a resposta é o que permite auditar acurácia depois. Antes só gravávamos
+# o tamanho, então "a leitura piorou" era impressão e não número.
+_LOG_TEXT_CHARS = 2000
+
+# Sonda de saúde depois de erro de transporte. Observado numa execução real: o
+# runner do Ollama morreu e cada chamada seguinte queimava 3 tentativas de ~42s
+# antes de desistir — mais de 2 minutos por passo, com o agente parecendo
+# travado. A sonda é texto puro e curta: se ela responde, o problema era daquela
+# chamada; se não responde, insistir só desperdiça tempo.
+_HEALTH_TIMEOUT_S = 10.0
+_RUNNER_DEAD_MARKERS = ("unexpectedly stopped", "GGML_ASSERT", "failed to load model")
 
 
 def _get_client() -> OpenAI:
@@ -87,18 +103,28 @@ def ask_vlm(
     prompt: str,
     schema: type[BaseModel] | None = None,
     image: Image.Image | None = None,
+    model: str | None = None,
 ) -> dict[str, Any] | str:
-    """Chama o VLM com retry+backoff. Aceita path OU PIL Image (image=). Retorna dict validado se schema, senão str."""
+    """Chama o modelo com retry+backoff. Aceita path OU PIL Image (`image=`).
+
+    O modelo é escolhido pela presença de imagem: com imagem vai pro `VLM_MODEL`,
+    sem imagem vai pro `TEXT_MODEL`. `model=` força um específico — usado pelo
+    bench, que compara candidatos. Retorna dict validado se houver schema, senão
+    a string crua.
+    """
     call_id = uuid.uuid4().hex[:12]
     client = _get_client()
     messages = _build_messages(prompt, image_path, image=image)
     response_format = {"type": "json_object"} if schema is not None else None
+    # Roteamento por natureza da chamada: quem manda imagem precisa do VLM, quem
+    # não manda está pedindo raciocínio e vai pro modelo de texto (ver LLMConfig).
+    model = model or LLM.pick(image_path is not None or image is not None)
 
     last_error: Exception | None = None
     for attempt in range(1, LLM.max_retries + 1):
         started = time.monotonic()
         try:
-            kwargs: dict[str, Any] = {"model": LLM.model, "messages": messages}
+            kwargs: dict[str, Any] = {"model": model, "messages": messages}
             if response_format is not None:
                 kwargs["response_format"] = response_format
 
@@ -114,9 +140,9 @@ def ask_vlm(
 
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -124,6 +150,7 @@ def ask_vlm(
                     "schema": schema.__name__ if schema else None,
                     "ok": True,
                     "raw_chars": len(content),
+                    "response": result if schema is not None else content[:_LOG_TEXT_CHARS],
                 }
             )
             return result
@@ -140,9 +167,9 @@ def ask_vlm(
             )
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -163,11 +190,17 @@ def ask_vlm(
                 LLM.max_retries,
                 e,
             )
+            if _looks_like_dead_runner(e) and not _runner_alive():
+                raise ModelUnavailableError(
+                    f"o modelo '{model}' não está rodando. O servidor Ollama "
+                    "responde, mas o runner morreu — reinicie `ollama serve` e "
+                    "confira `ollama ps`."
+                ) from e
             _log_call(
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "call_id": call_id,
-                    "model": LLM.model,
+                    "model": model,
                     "attempt": attempt,
                     "elapsed_s": round(elapsed, 3),
                     "image": image_path,
@@ -188,15 +221,53 @@ def ask_vlm(
     )
 
 
-def _ping() -> int:
-    logger.info("Pingando {} em {}", LLM.model, LLM.base_url)
+def _looks_like_dead_runner(error: Exception) -> bool:
+    text = str(error)
+    return any(marker in text for marker in _RUNNER_DEAD_MARKERS)
+
+
+def _runner_alive() -> bool:
+    """Uma chamada de texto curta e barata. False se o modelo não carrega."""
     try:
-        reply = ask_vlm(None, "Olá, está funcionando? Responda em uma frase curta.")
-    except Exception as e:
-        logger.error("Ping falhou: {}", e)
-        return 1
-    print(reply)
-    return 0
+        probe = OpenAI(
+            base_url=LLM.base_url, api_key=LLM.api_key, timeout=_HEALTH_TIMEOUT_S
+        )
+        probe.chat.completions.create(
+            model=LLM.text_model, messages=[{"role": "user", "content": "ok"}]
+        )
+    except Exception:  # noqa: BLE001 - a sonda existe pra devolver um booleano
+        return False
+    return True
+
+
+def _ping() -> int:
+    """Testa os dois modelos. Se forem o mesmo, testa uma vez só."""
+    models = {LLM.text_model: "texto", LLM.vision_model: "visão"}
+    logger.info("Servidor: {}", LLM.base_url)
+    failed = False
+    for name, role in models.items():
+        logger.info("Pingando {} ({})...", name, role)
+        try:
+            reply = _ask_model(name, "Responda em uma frase curta: você está funcionando?")
+        except Exception as e:  # noqa: BLE001 - o ping existe pra reportar falha
+            logger.error("  falhou: {}", e)
+            failed = True
+            continue
+        print(f"[{name}] {reply}")
+    if LLM.text_model == LLM.vision_model:
+        logger.warning(
+            "TEXT_MODEL não está configurado — decisões de combate e escolha vão "
+            "pro VLM. São chamadas de texto puro; um modelo de raciocínio dedicado "
+            "tende a jogar melhor. Ver .env.example."
+        )
+    return 1 if failed else 0
+
+
+def _ask_model(model: str, prompt: str) -> str:
+    resp = _get_client().chat.completions.create(
+        model=model, messages=[{"role": "user", "content": prompt}]
+    )
+    return resp.choices[0].message.content or ""
 
 
 def main() -> int:

@@ -39,6 +39,24 @@ _DPAD_MAP = {
 
 _pad: vg.VDS4Gamepad | None = None
 
+# Trava de emissão. Existe porque garantir "não mandar input" no chamador não
+# funciona: o replay tentou trocar `input_exec` por um gravador e mesmo assim
+# saiu input, porque `agent._NUDGE_ACTION` já tinha as funções ligadas desde o
+# import. A única garantia confiável é aqui embaixo, antes do driver.
+_dry_run = False
+
+
+def set_dry_run(enabled: bool) -> None:
+    """Liga/desliga a emissão real de input. Ligado = nada chega ao driver."""
+    global _dry_run
+    _dry_run = enabled
+    if enabled:
+        logger.info("Gamepad em dry-run: nenhum input será emitido")
+
+
+def is_dry_run() -> bool:
+    return _dry_run
+
 
 def _get_pad() -> vg.VDS4Gamepad:
     global _pad
@@ -50,9 +68,17 @@ def _get_pad() -> vg.VDS4Gamepad:
 
 
 def press(button: Button, hold_s: float | None = None) -> None:
-    """Aperta e solta um botão, com hold_s entre press e release."""
-    pad = _get_pad()
+    """Aperta e solta um botão, com hold_s entre press e release.
+
+    Em dry-run sai antes de tocar no driver — inclusive antes de criar o
+    dispositivo virtual, que `_get_pad` faria.
+    """
     hold = hold_s if hold_s is not None else GAMEPAD.press_hold_s
+    if _dry_run:
+        logger.debug("[dry-run] press {}", button.value)
+        return
+
+    pad = _get_pad()
 
     if button in _DPAD_MAP:
         pad.directional_pad(direction=_DPAD_MAP[button])
@@ -132,10 +158,24 @@ def walk_right() -> None:
 
 
 def reset() -> None:
-    """Solta tudo. Chamar antes de abortar."""
+    """Solta tudo. Chamar antes de abortar.
+
+    Em dry-run não há dispositivo pra resetar — e criar um só pra resetar seria
+    exatamente o que a trava existe pra evitar.
+    """
+    if _dry_run or _pad is None:
+        return
     pad = _get_pad()
     pad.reset()
     pad.update()
+
+
+def _avisar_sem_foco() -> None:
+    """Avisa se o input vai pra outra janela. Import tardio: `window` não faz
+    parte da camada de driver, e o resto do módulo não deve depender dele."""
+    from src.window import warn_if_unfocused
+
+    warn_if_unfocused()
 
 
 def _self_test(seconds: float = 1.0) -> None:
@@ -146,8 +186,9 @@ def _self_test(seconds: float = 1.0) -> None:
     ]
     logger.info("Self-test do gamepad — foque a janela do jogo agora.")
     time.sleep(3)
+    _avisar_sem_foco()
     for b in sequence:
-        logger.info("→ {}", b.value)
+        logger.info("-> {}", b.value)
         press(b)
         time.sleep(seconds)
 
@@ -166,6 +207,7 @@ def main() -> int:
         _self_test()
         return 0
     if args.press:
+        _avisar_sem_foco()
         press(Button(args.press))
         return 0
     parser.print_help()

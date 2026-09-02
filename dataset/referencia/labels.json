@@ -1,0 +1,35 @@
+{
+  "_sobre": [
+    "Gabarito dos frames de referência. Cada estado foi determinado OLHANDO A",
+    "IMAGEM durante a sessão de 2026-08-29, não pela própria CV — rotular com o",
+    "detector que se quer medir seria circular e sempre daria 100%.",
+    "O estado é o do jogo, não o veredito de CV: 'level_up' aqui vira 'dialog'",
+    "no vocabulário de vision.screen, que só separa o grupo."
+  ],
+  "frames": {
+    "20260802T154006402_map.png": "combat",
+    "20260802T154021211_combat_initial.png": "combat",
+    "20260802T154032207_card_scan_1.png": "combat",
+    "20260802T154035945_card_scan_2.png": "combat",
+    "20260802T154039124_card_scan_3.png": "combat",
+    "20260802T154042627_card_scan_4.png": "combat",
+    "20260802T154240385_combat_initial.png": "map",
+    "20260802T153740534_map.png": "map",
+    "20260802T153406187_loop.png": "map",
+    "20260802T153746341_loop.png": "map",
+    "20260802T153756843_loop.png": "map",
+    "20260802T153918887_card_scan_1.png": "map",
+    "20260802T153921862_card_scan_2.png": "map",
+    "20260503T114343443_level_up.png": "level_up",
+    "20260531T160257173_level_up.png": "level_up",
+    "20260802T154129487_level_up.png": "level_up",
+    "deck_baralho_referencia.png": "deck",
+    "20260802T153731541_combat_initial.png": "not_game"
+  },
+  "_nomes_enganosos": [
+    "Vários nomes de arquivo carregam o estado que o AGENTE ACHOU na época, e",
+    "estão errados. '154006402_map.png' é combate com 6 cartas;",
+    "'154240385_combat_initial.png' é o mapa. É justamente o erro que motivou o",
+    "pivô para CV (ADR-022) — não corrigir os nomes, eles são a evidência."
+  ]
+}

@@ -1,0 +1,18 @@
+A imagem mostra uma tela do jogo Vampire Crawlers que NÃO é combate, mapa nem painel de escolha de recompensa.
+Diga qual é.
+
+Opções (escolha EXATAMENTE UMA):
+- "title": tela inicial com o logo "Vampire Crawlers".
+- "menu": menu principal ou pausa — abas, opções, inventário, configurações.
+- "game_over": tela de DERROTA. Precisa dizer claramente que a run acabou mal.
+- "stage_complete": fim de fase — pá no chão à frente e ícone de próxima fase.
+- "game_complete": tela final de "PARABÉNS", jogo concluído.
+- "notice": qualquer outra coisa — aviso, carregamento, transição, tela que não
+  casa com nenhuma das acima.
+
+Regra importante: na dúvida, responda "notice". NÃO chute "game_over": o agente
+encerra a run ao ver esse estado, e uma tela mal classificada como derrota mata
+uma partida que estava indo bem. Só use "game_over" se a tela declarar a derrota.
+
+Schema (responda APENAS com este JSON):
+{"estado": "title" | "menu" | "game_over" | "stage_complete" | "game_complete" | "notice"}

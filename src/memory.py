@@ -20,7 +20,7 @@ periodicamente.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -33,10 +33,16 @@ _SUMMARY_H = "## Resumo (sumarizado)"
 _EVENTS_H = "## Eventos recentes"
 _DEFAULT_MAX_EVENTS = 40
 _DEFAULT_KEEP_RECENT = 10
+# Tetos do resumo. Sem eles o accordion não é accordion: a versão sem LLM
+# ACRESCENTAVA 20 linhas a cada colapso e nunca encolhia, e um `notes.md` de uma
+# sessão longa chegou a 254 mil caracteres — ~63 mil tokens injetados em TODA
+# decisão de combate, o que nenhum contexto comporta.
+_MAX_SUMMARY_LINES = 24
+_MAX_SUMMARY_CHARS = 4000
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -96,16 +102,16 @@ class Memory:
         if not old:
             return prior_summary
         if self.summarize_fn is None:
-            logger.debug("Sem summarize_fn — concatenando resumo bruto")
-            joined = "\n".join(f"- {e}" for e in old[-20:])
-            return (prior_summary + "\n" + joined).strip()
+            logger.debug("Sem summarize_fn — mantendo as linhas mais recentes")
+            linhas = prior_summary.splitlines() + [f"- {e}" for e in old]
+            return _trim("\n".join(linhas))
         body = (
             (f"Resumo anterior:\n{prior_summary}\n\n" if prior_summary else "")
             + "Eventos a sumarizar (cronologicamente):\n"
             + "\n".join(f"- {e}" for e in old)
         )
         try:
-            new_summary = self.summarize_fn(body).strip()
+            new_summary = _trim(self.summarize_fn(body))
             logger.info("Memory: accordion compactou {} eventos", len(old))
             return new_summary
         except Exception as exc:  # noqa: BLE001
@@ -117,12 +123,30 @@ class Memory:
         return events[-n:]
 
     def summary(self) -> str:
-        s, _ = self._read()
-        return s
+        """Resumo já limitado. Vai direto pra dentro de um prompt.
+
+        O corte também acontece na leitura, não só na escrita: um `notes.md`
+        herdado de uma versão anterior (ou crescido por outro caminho) não pode
+        estourar o prompt de quem só quis ler.
+        """
+        raw, _ = self._read()
+        return _trim(raw)
 
     def reset(self) -> None:
         if self.path.is_file():
             self.path.unlink()
+
+
+def _trim(text: str) -> str:
+    """Mantém o FIM do resumo: o mais recente é o que orienta a próxima decisão."""
+    marca = "_(resumo antigo descartado)_"
+    linhas = text.strip().splitlines()
+    if len(linhas) > _MAX_SUMMARY_LINES:
+        linhas = [marca, *linhas[-_MAX_SUMMARY_LINES:]]
+    resultado = "\n".join(linhas)
+    if len(resultado) > _MAX_SUMMARY_CHARS:
+        resultado = marca + "\n" + resultado[-_MAX_SUMMARY_CHARS:]
+    return resultado.strip()
 
 
 def default_memory(summarize_fn: Callable[[str], str] | None = None) -> Memory:

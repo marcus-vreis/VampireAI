@@ -1,6 +1,6 @@
 # Vampire Crawlers AI
 
-Agente que joga **Vampire Crawlers** (deckbuilder roguelike) usando um **modelo de visão-linguagem local** (Qwen2.5-VL 7B via Ollama). Sem API paga, sem dados na nuvem.
+Agente que joga **Vampire Crawlers** (deckbuilder roguelike) com **visão computacional** para perceber a tela e um **modelo local** (via Ollama) para decidir. Sem API paga, sem dados na nuvem.
 
 > Status: experimental, em desenvolvimento ativo. Veja [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -15,24 +15,50 @@ Vampire Crawlers foi escolhido por três razões:
 
 ## Arquitetura
 
+O princípio estruturante: **a CV decide geometria, o modelo decide semântica.**
+
 ```
 janela do jogo
-    ↓ screen capture (mss)
-detector de estado (combat | map | level_up | chest | ...)
+    ↓ captura do client area (Win32 + mss)
+CV determinística (~19ms, sem alucinar)
+    ├─ que tela é esta?        assinatura de cor
+    ├─ quantas cartas? cursor? círculos de custo
+    ├─ quanta mana?            OCR
+    └─ pra onde ando?          minimapa → ícones → BFS
     ↓
-percepção: VLM + OCR + scan sequencial de cartas
-    ↓ saída validada por pydantic
-estrategista LLM (decide UMA ação por chamada)
-    ↓
+modelo, só onde há semântica
+    ├─ que carta é esta?       VLM_MODEL (1ª vez; depois é cache por hash)
+    └─ qual jogar? qual pegar? TEXT_MODEL (texto puro, sem imagem)
+    ↓ validado por código: mana e índice, senão repergunta
 executor → gamepad virtual (vgamepad → ViGEm Bus → DualShock 4)
-    ↓
-inputs no jogo (D-pad + L2/R2 + X/quadrado)
-    ↺ loop
+    ↺ recaptura a cada passo, erros não acumulam
 ```
 
-**Pivot 2026-05-02:** input mudou de mouse+coords para gamepad virtual. Cartas/opções são selecionadas por destaque visual ("a maior") + travessia (← →), eliminando toda calibração de UI.
+Isso não era assim. A percepção inteira passava pelo VLM, e medir mostrou o custo:
+de 39 frames que eram o mapa, o modelo rotulava ao menos 9 como outra coisa — a
+ponto de rodar um scan de cartas de 4 passos em cima do mapa. Perguntar "quantas
+cartas?" e "pra onde ando?" a um modelo de 7B era erro de arquitetura, não prompt
+mal escrito. Ver [`docs/decisions.md`](docs/decisions.md), ADR-022.
+
+O modelo continua decidindo o que importa — e a taxa de jogadas ilegais que o
+validador intercepta virou métrica de qualidade dele.
+
+**Input por gamepad virtual.** Cartas e opções são escolhidas por destaque visual
+("a maior") + travessia (← →), sem nenhuma coordenada de clique.
 
 Memória persistente em markdown, sumarização accordion para runs longas.
+
+## Ferramentas
+
+```bash
+python -m src.vision.debug frames/x.png    # anota o frame com tudo que a CV vê
+python -m src.label                        # sessão de captura rotulada → dataset/
+python -m src.label --summary              # concordância CV × rótulo, por estado
+python -m src.bench --models a,b           # compara modelos na decisão de combate
+```
+
+O `bench` corrige a própria prova: a legalidade de uma jogada é regra que o código
+já conhece, então dá pra comparar modelos sem rotulagem humana.
 
 ## Setup
 
@@ -44,19 +70,28 @@ curl -fsSL https://ollama.com/install.sh | sh   # Linux
 ollama pull qwen2.5vl:7b
 ollama serve   # deixar rodando
 
+# Opcional: um modelo de TEXTO separado para as decisões. As chamadas de decisão
+# não têm imagem, então um VLM ali é desperdício. Configure TEXT_MODEL no .env.
+# Cuidado com VRAM: os dois precisam caber residentes, senão o Ollama recarrega
+# a cada troca (~30s). Ver .env.example.
+
 # 2. Projeto
 git clone <repo>
-cd vampire-ai
+cd vampire-ai        # os comandos abaixo precisam rodar DAQUI
 python -m venv .venv && source .venv/bin/activate   # Linux/macOS
 # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+# As dependências são declaradas em pyproject.toml; requirements.txt aponta pra
+# lá, então não há duas listas pra manter em sincronia.
+# O agente é uma aplicação, roda com `python -m src.agent` de dentro do projeto.
 
 # 3. Tesseract (para OCR auxiliar — opcional mas recomendado)
 # Linux: sudo apt install tesseract-ocr tesseract-ocr-por
 # Windows: baixar instalador em https://github.com/UB-Mannheim/tesseract/wiki
 #          ADICIONAR ao PATH (default: C:\Program Files\Tesseract-OCR)
 # macOS: brew install tesseract tesseract-lang
-# Sem Tesseract o agente roda, mas perde OCR de HP/mana — VLM tem que adivinhar.
+# Sem Tesseract o agente roda, mas a leitura de mana volta a custar uma chamada
+# ao modelo por turno em vez de ~5ms.
 
 # 4. ViGEm Bus driver (Windows) — necessário pro gamepad virtual
 # https://github.com/ViGEm/ViGEmBus/releases  (instalar uma vez)
@@ -72,24 +107,36 @@ python -m src.gamepad --test    # foque o jogo: deve ver botões sendo apertados
 
 ## Uso
 
+> **Para parar o agente às pressas, alterne para o terminal.** Ele recusa agir sem
+> o jogo em primeiro plano, então tirar o foco o congela na hora — e `Ctrl+C`
+> encerra limpo, soltando o gamepad e imprimindo o resumo da run.
+
 ```bash
 python -m src.agent --confirm                       # loop completo (consome GPU)
 python -m src.agent --confirm --iters 10            # bounded para teste
-python -m src.perception --frame frames/example.png # debug em frame salvo
+python -m src.perception --cards frames/x.png       # detecção de cartas, sem modelo
+python -m src.states --frame frames/x.png --cv-only # assinatura de CV, sem modelo
 python -m src.gamepad --press confirm               # apertar 1 botão isolado
 ```
 
 ## Hardware mínimo
 
-- GPU com 8GB VRAM (16GB recomendado para folga com o jogo rodando junto)
+- GPU com 8GB VRAM (16GB recomendado — dá folga pro jogo e permite um segundo
+  modelo de texto residente)
 - 16GB RAM
 - 10GB de disco (modelo + frames de debug)
 
 ## Limitações conhecidas
 
-- VLM 7B alucina nomes "corrigindo" para termos formais; mitigado com prompt de transcrição literal.
-- Cartas sobrepostas exigem prompt explícito de contagem.
-- Latência de ~5-15s por turno; aceitável para turn-based.
+- VLM 7B alucina nomes "corrigindo" para termos formais; mitigado com prompt de
+  transcrição literal.
+- Na decisão de combate, o `qwen2.5vl:7b` acerta 92% em legalidade e 60% em
+  aderência à estratégia do jogo (25 cenários). O validador intercepta o ilegal,
+  mas cada interceptação custa uma repergunta. Um `TEXT_MODEL` dedicado deve
+  melhorar isso — é o próximo experimento.
+- Faltam templates de baú e obstáculo no minimapa; sem o de obstáculo, o
+  planejador pode tentar rota bloqueada.
+- Windows apenas, por causa do driver ViGEm.
 
 ## Roadmap
 

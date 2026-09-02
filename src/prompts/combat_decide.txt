@@ -16,3 +16,8 @@ Estado atual recebido como JSON (cartas, mana, inimigos, hp). Sua resposta:
 
 Schema (responda APENAS com este JSON):
 {"acao": "jogar_carta" | "finalizar_turno", "indice_alvo": int|null, "motivo": str}
+
+CUSTO DESCONHECIDO
+Carta com "mana": null teve o custo ilegível na leitura. Prefira uma carta de
+custo conhecido: se o custo real não couber na mana, o jogo recusa a jogada e o
+turno trava sem aviso.

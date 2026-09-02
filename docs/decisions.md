@@ -2,6 +2,12 @@
 
 Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 
+**As ADRs não são apagadas quando mudam de ideia** — o histórico do raciocínio
+vale. Mas uma decisão superada precisa dizer isso na própria entrada, senão quem
+lê de cima pra baixo implementa o que já foi abandonado. Procure a marca:
+
+> ⚠️ **SUPERADA por ADR-NNN** — o que vale hoje está lá.
+
 ## ADR-001: VLM local em vez de API
 **Data:** 2026-05
 **Decisão:** Qwen2.5-VL 7B via Ollama.
@@ -13,6 +19,8 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Motivo:** portabilidade. Trocar pra Claude/GPT é só mudar `base_url`.
 
 ## ADR-003: OCR híbrido para números pequenos
+> ⚠️ **SUPERADA por ADR-033.** A ordem hoje é glifo aprendido → Tesseract →
+> modelo, e o Tesseract deixou de ser necessário.
 **Decisão:** pytesseract antes de VLM para HP/mana globais.
 **Motivo:** VLM falha em números pequenos sobre sprites; OCR upscale 4× + threshold é mais previsível.
 
@@ -33,10 +41,14 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Motivo:** clone novo roda sem copiar `.env` na mão.
 
 ## ADR-009: Detecção de estado via VLM
+> ⚠️ **SUPERADA por ADR-022.** A detecção é por assinatura de CV; o modelo só
+> desempata as telas raras.
 **Decisão:** prompt curto de múltipla escolha, sem heurística de pixel ainda.
 **Motivo:** validar caminho ponta-a-ponta antes de otimizar.
 
 ## ADR-010: OCR vence VLM em divergência
+> ⚠️ **OBSOLETA.** `_reconcile_combat` não existe mais. O combate não usa VLM
+> pra ler números: mana e HP vêm de `vision/hud.py` (ADR-033).
 **Decisão:** `_reconcile_combat` sobrescreve VLM quando OCR diverge.
 **Motivo:** dígitos pequenos confundem VLM (8↔3, 5↔6).
 
@@ -55,24 +67,34 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Substitui:** ADR-011 (coords TBD), ADR-013 (slots calculados em runtime). Ambos obsoletos.
 
 ## ADR-015: Scan sequencial de cartas em combate
+> ⚠️ **SUPERADA por ADR-024.** A travessia não recebe mais `total_cartas` — ela
+> descobre o tamanho da mão sozinha, porque a carta selecionada cobre o círculo
+> de custo da vizinha e a contagem num frame só subestima.
 **Data:** 2026-05-02
 **Decisão:** ao entrar em combate, perceber `total_cartas` no frame inicial; depois pipeline `[capture → ← → capture → ← → ...]` capturando UM print por carta destacada. Cada print classificado por `card_scan.txt` (prompt curtíssimo).
 **Motivo:** carta destacada ocupa muito espaço no frame → VLM lê com alta confiança. Reduz problema de "ler 4-8 cartas pequenas e sobrepostas" a "ler 1 carta grande, N vezes".
 **Trade-off:** N chamadas VLM por turno (latência ~3s × N ≈ 12-20s pra 4-7 cartas). Aceitável dentro do alvo de <15s/turno se modelo já estiver carregado.
 
 ## ADR-016: Uma ação por chamada (combate e mapa)
+> ℹ️ **Ainda vale, com uma ressalva da ADR-043:** a mão conhecida é reaproveitada
+> entre jogadas do mesmo turno. A decisão continua sendo uma por vez e cada passo
+> recaptura — o que se dispensa é refazer a travessia, não a percepção.
 **Data:** 2026-05-02
 **Decisão:** modelo decide só a PRÓXIMA ação. Executa, recaptura, decide de novo. Não constrói pipeline pré-computada.
 **Motivo:** robusto a estado inesperado (animações, buffs/debuffs, level up no meio do combate). Erros não acumulam — auto-correção a cada step.
 **Trade-off:** mais chamadas VLM por turno. Mitigado por `card_scan` cachear o conhecimento da mão (decisão usa scan + estado, não recapta tudo).
 
 ## ADR-017: Mapa via pergunta mínima de direção
+> ⚠️ **APOSENTADA por ADR-022** (ver nota completa mais abaixo). A direção sai
+> de um BFS sobre o minimapa; o modelo não é consultado no mapa.
 **Data:** 2026-05-02
 **Decisão:** prompt do `map.txt` reduz percepção a "alvo está em qual direção relativa: frente/esquerda/direita/atrás/no_alvo?". Sem contar paredes, sem ler mini-mapa em detalhe.
 **Motivo:** pergunta mais fácil que VLM consegue responder. Custo de N steps por nó (4-8 × ~3s = 15-40s) é aceitável porque mapa não é caminho crítico de latência.
 **Trade-off:** lento. Aceitável; mapa entre combates não bate o orçamento de <15s do combate.
 
 ## ADR-019: Consenso multi-amostra para contagem de cartas
+> ⚠️ **APOSENTADA por ADR-022 e ADR-024** (ver nota completa mais abaixo). Era
+> curativo sobre um recorte errado.
 **Data:** 2026-05-03
 **Decisão:** `_perceive_combat` chama o prompt de contagem K vezes (default `PERCEPTION_COUNT_SAMPLES=3`) sobre o mesmo crop e tira o **mode** do total + idx. Pré-processamento PIL (`ImageEnhance.Contrast/Color/Sharpness`) aplicado ao crop antes da chamada. Mesmo realce reaproveitado em `scan_combat_hand` para os cards individuais.
 **Motivo:** Qwen2.5-VL 7B oscila ±1 na contagem de bolinhas pequenas em leques sobrepostos; saturação/contraste destacam cyan das bolinhas; voto majoritário cancela ruído residual.
@@ -94,3 +116,1474 @@ Registro curto de escolhas feitas e o porquê. Estilo ADR simplificado.
 **Decisão:** o estado `chest_card_target` (tela secundária do baú: "aplicar bônus em qual carta do deck?") usa `src/prompts/chest_card_target.txt` em vez de reusar `chest.txt`.
 **Motivo:** as duas telas têm estruturas diferentes — `chest.txt` descreve a recompensa do baú (cartas/bônus/evolução/vazio), enquanto `chest_card_target` pergunta sobre cartas do deck atual com cursor visível. Reusar o prompt confundia o VLM (esperava `tipo: "carta"|"bonus"|"evolucao"|"vazio"` quando a tela era escolha de alvo).
 **Trade-off:** mais um prompt para manter. Mitigado pela convenção `src/prompts/{estado}.txt` (ADR-004).
+
+## ADR-022: Sensor determinístico por CV (2026-08-29) ⭐
+**Data:** 2026-08-29
+**Decisão:** mover percepção geométrica do VLM para OpenCV. Estado da tela,
+contagem de cartas, posição do cursor, mana e navegação no mapa passam a sair de
+`src/vision/`. O VLM fica com semântica: ler carta nova, escolher recompensa,
+decidir a jogada.
+**Motivo (medido, não suposto):**
+- O recorte `hand_area` `(380,460,480,260)` cobria menos da metade do leque real
+  (`~(250,380)-(1030,720)`). Num frame de 6 cartas cortava a carta da ponta
+  esquerda inteira e fatiava ao meio a selecionada — que é a posição inicial do
+  cursor. Como `scan_combat_hand` usava o mesmo recorte, a leitura de carta
+  acontecia sobre um pedaço dela. Causa raiz da contagem errada **e** da piora
+  na leitura.
+- `card_scan.txt` mandava procurar o custo no "canto superior direito"; nos
+  frames ele está sempre no canto superior **esquerdo**.
+- Detecção de estado errava nos dois sentidos. Dos 39 frames que são o mapa, o
+  VLM rotulou ao menos 9 como outra coisa — incluindo um scan de cartas de 4
+  passos rodado inteiro em cima do mapa.
+- Custo: `StateDetection` era 95 de 319 chamadas do log, p50 1.75s, p90 4.34s.
+  A assinatura de CV equivalente roda em ~19ms.
+**Trade-off aceito:** entram `numpy` e `opencv-python-headless` (~54MB), contra o
+espírito de setup leve do README. Protótipo em PIL puro custava ~200ms/frame; com
+numpy vai a ~5ms.
+**Substitui:** ADR-009 (detecção de estado via VLM), ADR-017, ADR-019.
+
+## ADR-023: Captura pelo client area da janela (2026-08-29)
+**Decisão:** `src/window.py` localiza a janela do jogo via Win32 (`EnumWindows` +
+`GetClientRect` + `ClientToScreen`) e `capture.grab` usa esse retângulo.
+**Motivo:** o retângulo calculado (`monitor centralizado − 1280x720`) deixava o
+frame deslocado conforme a janela tivesse barra de título ou fosse movida. Frames
+de sessões diferentes têm geometrias distintas, e todo recorte de UI saía do
+lugar junto. É a classe de erro que envenenava as regiões fixas com o tempo.
+**Trade-off:** só Windows. Já era, por causa do ViGEm (ADR-014). Se a janela não
+for achada, cai no retângulo de config com aviso.
+
+## ADR-024: Travessia em vez de contagem num frame (2026-08-29)
+**Decisão:** `scan_combat_hand` não recebe mais `total_cartas`. Percorre a mão
+com ← lendo uma carta por passo e para sozinha quando o cursor volta a uma
+posição já vista.
+**Motivo:** a carta selecionada sobe e **cobre o círculo de custo da vizinha à
+direita** — verificado em frames reais (em `card_scan_1`, Gatti Amari selecionada
+esconde o custo de Pugnala). Contar círculos num único frame, portanto,
+subestima em 1 sempre que o cursor não está na ponta direita. A travessia dá o
+total exato e já era feita de qualquer jeito pro scan.
+**Efeito colateral resolvido:** `agent.py` fixava `cursor_after_scan = 0`. Com
+`total` inflado o cursor não estava em 0 e **todos** os índices seguintes saíam
+deslocados — erro que acumulava, ao contrário do que a ADR-016 promete.
+
+## ADR-025: Cache de carta por hash perceptual (2026-08-29)
+**Decisão:** `src/carddb.py` guarda identidade de carta indexada por dHash 16x16
+do recorte. Só há chamada ao VLM na primeira vez que uma carta aparece.
+**Motivo:** uma carta é sempre o mesmo sprite; `CardScanFrame` custava 2.2s (p50)
+e era a maior fatia da latência de um turno.
+**Limiar medido:** sobre 256 bits. A primeira medição usou recortes do MESMO
+frame deslocados de 1 a 3px (4-36 bits) — cenário fácil demais. Medindo o caso
+real, a mesma carta selecionada em **frames diferentes** fica em 21-45; cartas
+diferentes, em 108-134. O corte em 60 fica no meio, e erra pro lado seguro: um
+par não reconhecido custa uma chamada de modelo a mais, enquanto uma fusão errada
+serviria a carta errada — e a menor distância entre cartas distintas (108) está
+bem acima do corte.
+**Cartas buffadas geram entrada nova, e isso é correto.** Bônus alteram os números
+na descrição ("Cause 374" vs "Cause 204" no mesmo Otto), então o visual muda junto
+com o efeito. O cache mapeia aparência → o que a carta diz; se o que ela diz mudou,
+tem que ser outra entrada.
+**Não guardamos leitura incompleta:** carta com `mana=None` não entra no cache.
+`combat.validate` não consegue checar mana ausente, então um custo ilegível
+congelado viraria jogada ilegal em todo turno seguinte em que a carta aparecesse.
+
+## ADR-026: Validação de jogada, não substituição do decisor (2026-08-29)
+**Decisão:** o VLM continua escolhendo a carta. `src/combat.py` recusa o que o
+jogo recusaria (mana insuficiente, índice fora da mão) e repergunta com o motivo;
+no 3º erro joga pela regra de `jogo.md` (custo crescente, tomo mais barato
+primeiro).
+**Motivo:** calcular a jogada ótima por código seria mais confiável, mas tiraria
+a decisão do modelo e com ela o ângulo de pesquisa do projeto. Validar torna
+jogada ilegal impossível sem esvaziar o papel do VLM.
+**Bônus:** a taxa de rejeição é, de graça, uma métrica de quão bom o modelo é.
+
+## ADR-027: Resposta do VLM gravada no log (2026-08-29)
+**Decisão:** `llm.py` grava o campo `response` em `logs/llm.jsonl`.
+**Motivo:** antes só gravava `raw_chars`. Sem a resposta não havia como auditar
+acurácia — "a leitura piorou" era impressão, não número. Sem isso o dataset
+rotulado não serve pra comparar modelos.
+
+## ADR-017 — APOSENTADA (2026-08-29)
+Mapa por pergunta de direção ao VLM. Substituída pela ADR-022: o minimapa é lido
+por CV e o caminho sai de um BFS. Pedir raciocínio espacial 3D a partir da visão
+em 1ª pessoa era a pergunta mais difícil que dávamos a um modelo de 7B, com a
+resposta desenhada ao lado na tela.
+
+## ADR-019 — APOSENTADA (2026-08-29)
+Consenso multi-amostra (k-vote) para contagem de cartas. Era curativo sobre osso
+quebrado: três chamadas tirando a média de uma leitura feita num recorte errado
+continuam erradas, só custam 3x mais. Com o recorte corrigido e a contagem por
+travessia (ADR-024), o voto perdeu função.
+
+## ADR-028: Ícones do minimapa por template matching (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** caveiras, chefe e interrogação são localizados por `cv2.matchTemplate`
+contra sprites recortados de frame real (`src/vision/templates/`), não por
+segmentação de cor. `src/nav.py` compõe isso com o BFS: alvo é o inimigo
+alcançável mais próximo, depois o chefe, e explorar a fronteira só como pano de
+fundo.
+**Motivo:** segmentar por cor quase funcionou — os ícones têm um tom único
+(cinza 136, contra 194-206 do piso e 160-179 da névoa). Mas as linhas de borda
+das salas usam o mesmo tom e grudam no crânio, e qualquer abertura morfológica
+forte o bastante pra separá-las parte o crânio ao meio. Sprite fixo pede template.
+**Prioridade de alvo:** `jogo.md` diz que limpar os inimigos menores fortalece o
+personagem pro chefe, então inimigo vem antes de chefe. Bônus não vale desvio.
+**Escala:** varrida em passo de 0.05 entre 0.80 e 1.60, **absoluta**. Derivar do
+tamanho da seta do jogador parecia natural e engana: num frame a seta mede 19px
+(razão 1.19) enquanto os ícones pedem 1.30. Como é pixel art, 0.05 de erro de
+escala derruba a correlação de 0.85 pra 0.60.
+**Limiar por tipo:** a interrogação (template 15x9, baixo contraste) casa com
+ruído do pergaminho; exige 0.90 contra 0.70 dos outros. Não é usada pra navegar.
+**Validação:** no frame de referência, 6 inimigos + 1 chefe, conferidos um a um na
+imagem. Num frame anterior da mesma run aparecem 7 — o inimigo a mais é o que o
+jogador derrotou no intervalo.
+
+## ADR-029: Minimapa localizado por âncora, com prova de pergaminho (2026-08-29)
+**Decisão:** `minimap.locate` acha o minimapa pelo maior bloco cor-de-pergaminho
+na região inferior direita, e **exige que a caixa tenha ≥50% de pergaminho**.
+Devolve None quando não há mapa.
+**Motivo:** a caixa fixa perdia metade do mapa em capturas desalinhadas (há
+frames em que ela pega o viewport 3D no topo). Mas ancorar sem provar era pior:
+num frame de combate a arte das cartas cai na mesma faixa de cinza, a busca
+devolvia a área inteira, e um círculo de custo azul passava por seta do jogador.
+Mapa de verdade fica em ~0.88 de pergaminho; combate, em ~0.17.
+
+## ADR-030: Ícones fazem parte da área andável (2026-08-29)
+**Decisão:** `read_minimap` soma ao piso os pixels em tom de ícone que estejam
+perto do piso.
+**Motivo:** caveira e chefe são desenhados em cinza 136, abaixo do limiar de piso
+(185). Sem isso viram buracos na máscara e o BFS não consegue chegar até um
+inimigo — que é exatamente o alvo que queremos alcançar. A exigência de
+proximidade do piso exclui as bordas rasgadas do pergaminho, que usam o mesmo tom.
+
+## ADR-031: Dois modelos, roteados pela natureza da chamada (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `VLM_MODEL` atende chamadas COM imagem; `TEXT_MODEL` atende chamadas
+SEM imagem. `ask_vlm` escolhe sozinho pela presença de imagem — nenhum ponto de
+chamada mudou. `TEXT_MODEL` vazio cai no VLM, então instalação existente continua
+funcionando.
+**Motivo:** depois da ADR-022, as chamadas ao modelo se separaram em duas
+naturezas bem diferentes. Transcrever carta precisa de visão. Decidir a jogada e
+a recompensa é texto puro — `_decide_combat` e `_decide_choice` **já** passavam
+`image=None` para um VLM. Isso desperdiça duas vezes: a torre visual não
+contribui nada, e o backbone de linguagem de um VLM é mais fraco que o de um
+modelo de texto do mesmo tamanho. Trocar o VLM não era a alavanca; parar de usar
+VLM onde não há imagem era.
+**Risco documentado:** se os dois modelos não couberem residentes na VRAM, o
+Ollama descarrega e recarrega a cada troca (~30s), o que destrói o orçamento de
+latência. Em 16GB: 8B + 8B é seguro, 8B + 14B é apertado. Exige
+`OLLAMA_MAX_LOADED_MODELS=2`.
+
+## ADR-032: Bench de decisão com gabarito derivado (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `src/bench.py` gera cenários de combate sintéticos a partir de cartas
+reais e mede três taxas por modelo: **parse** (JSON válido no schema), **legal**
+(cabe na mana e no índice) e **regra** (bate com a heurística de `jogo.md`).
+**Motivo:** "qual modelo usar?" precisava virar número, e a rotulagem humana para
+julgar qualidade de decisão seria cara e subjetiva. Mas a legalidade de uma
+jogada é uma **regra que o código já conhece** — então o benchmark corrige a
+própria prova, sem rótulo nenhum. Isso o torna executável hoje, antes de existir
+dataset.
+**Baseline medida (qwen2.5vl:7b, seed 7):**
+
+| n | parse | legal | regra | mediana |
+|---|---|---|---|---|
+| 25 (subdimensionada) | 100% | 92% | 60% | 1.62s |
+| 25 (repetição) | 100% | 96% | 48% | 1.62s |
+| **60** | **100±0%** | **92±7%** | **55±13%** | 1.67s |
+
+As duas execuções de n=25 deram 60% e 48% de aderência à regra **na mesma
+configuração**. Ambas estavam certas dentro do ruído: com 25 cenários a margem de
+95% passa de 20pp. Ver ADR-057.
+
+Ou seja: o modelo sempre produz JSON válido, mas **8% das jogadas são ilegais**
+(o validador da ADR-026 as intercepta, ao custo de uma repergunta cada) e **40%
+divergem da estratégia central do jogo**. É o número a bater ao testar um modelo
+de texto dedicado.
+**Ressalva (revista):** a estimativa original de "±10pp" subestimava. A margem
+correta em 25 cenários é ~±20pp na taxa de aderência à regra, o que se confirmou
+empiricamente: 60% e 48% na mesma configuração. Ver ADR-057.
+**Limitação:** "regra" não é gabarito absoluto — uma jogada fora da heurística
+pode ser melhor num contexto específico. Divergência sistemática, porém, indica
+que o modelo não entendeu a mecânica de combo por custo crescente.
+
+## ADR-033: Algarismos do HUD por glifo aprendido (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `src/vision/digits.py` guarda um livro glifo→algarismo. A leitura de
+mana tenta, nesta ordem: glifo conhecido (microssegundos) → Tesseract (~5ms) →
+modelo (~830ms). O que Tesseract ou modelo respondem é **ensinado** ao livro.
+**Motivo:** a mana é um algarismo grande e nítido sobre o orbe — trivial pra
+qualquer OCR — mas o Tesseract é binário externo que nem toda instalação tem (a
+desta máquina não tem), e cair no modelo custava uma chamada por turno. Como o
+jogo é pixel art com fonte fixa, o glifo de um "3" é sempre o mesmo mapa de bits:
+o reconhecimento é exato, não aproximado.
+**Por que não embarcar templates prontos:** dos frames existentes só dá pra
+colher glifos limpos de 2, 3 e 4 — os demais vieram de capturas desalinhadas e
+estão cortados. Um leitor que cobre 3 dos 10 algarismos leria 0, 1, 5 e 6 errado
+**em silêncio**, o que é pior que não ler. Aprender em runtime resolve sozinho.
+**Proteção contra rótulo ruim:** um algarismo só passa a ser servido após 2
+observações concordantes. Sem isso, uma leitura errada do modelo envenenaria
+aquele glifo permanentemente.
+**Mesmo padrão do `CardDB` (ADR-025):** o modelo ensina, a CV assume.
+
+## ADR-034: Filtro de densidade separa algarismo de contorno (2026-08-29)
+**Decisão:** `find_glyphs` exige densidade ≥0.30 (área do componente sobre área
+da caixa), além dos filtros de tamanho e proporção.
+**Motivo:** no coração, a máscara de texto claro pega também o **contorno branco
+do próprio coração**, que passava nos filtros de tamanho e proporção. Medido: os
+quatro algarismos ficam em 0.52-0.62 de densidade; o contorno, em 0.09-0.10 —
+porque é uma curva fina ocupando uma caixa grande. Margem de 3x pros dois lados.
+**Consequência:** `read_hp` passou a funcionar. A versão anterior partia a string
+de dígitos ao meio e só acertava por acidente quando o total tinha contagem par.
+O agrupamento agora é por **linha**, usando a altura mediana do algarismo como
+corte — usar o espalhamento total colapsava as duas linhas do coração numa só.
+
+## ADR-035: Rede de segurança contra travamento (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `src/stall.py` compara a assinatura do frame entre iterações. Se a
+tela não muda por `patience` passos, escalona botões — X, depois □, depois andar
+pra frente. Esgotadas as tentativas, aborta a run com erro em vez de girar em
+falso.
+**Motivo:** o agente tem handler pra 12 estados, mas o jogo tem telas que nenhum
+cobre. `jogo.md` descreve que a evolução de carta abre **duas telas de
+confirmação** depois de escolher as duas cartas; nelas o `handle_chest` atual lê
+`opcoes=[]` e aperta □ (sacar dinheiro) em vez de X, e o loop fica preso pra
+sempre. Não temos frame de evolução pra tratar caso a caso, e nunca teremos frame
+de toda tela possível.
+**Por que genérico em vez de específico:** cobrir cada tela desconhecida exigiria
+tê-las todas capturadas. A rede genérica custa ~1ms por passo e cobre também o
+que ainda não vimos. Não substitui handler correto — evita que uma tela
+desconhecida termine a run.
+**Ordem dos botões:** X primeiro porque é o "confirmar/avançar" do jogo e resolve
+a maioria das telas de aviso; □ depois (sacar/voltar); andar pra frente por
+último, que destrava o mapa.
+**Limiar medido** (diferença média por pixel numa assinatura 16x16):
+
+| situação | delta |
+|---|---|
+| mesma tela, só animação de fundo | 0.89 – 1.46 |
+| cursor andou uma carta (menor mudança real) | 4.44 – 8.43 |
+| girou no mapa | 17.62 |
+
+Corte em **2.5**, com ~1.7x de folga pros dois lados. O primeiro palpite foi 4.0,
+que estava colado demais na menor mudança real — medir corrigiu.
+
+## ADR-036: HP entra na decisão de combate (2026-08-29)
+**Decisão:** `HandScan` carrega `hp` e o prompt de combate recebe a linha
+`HP: atual/máximo`, com aviso explícito quando cai a 35% ou menos.
+**Motivo:** `read_hp` funcionava mas nada consumia — era código morto, contra as
+próprias regras do projeto. E sem o dado o modelo escolhe dano por padrão mesmo à
+beira da morte, então as cartas de armadura do deck nunca são jogadas.
+**Duas armadilhas encontradas ao implementar:**
+1. O aviso usava um emoji, que estourava `UnicodeEncodeError` no console cp1252
+   do Windows. Texto puro em PT-BR resolve e o modelo lê igual.
+2. Numa primeira versão o HP era calculado mas **não chegava ao prompt** — a
+   linha nunca foi inserida na lista de partes. Os testes exercitavam `_hp_line`
+   isolado e passavam. Lição: testar a função que formata não prova que o dado
+   chega ao destino. `tests/test_agent_memory.py` agora testa o prompt montado.
+
+## ADR-037: Estado `deck` para a tela "Baralho" (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** 13º estado, detectado por CV. Handler fecha com quadrado.
+**Motivo:** achado observando o jogo ao vivo, não nos frames salvos. As cartas do
+deck também desenham círculo de custo, então a tela passava por combate e o
+agente tentaria jogar carta ali — navegando o deck em vez de lutar.
+**Assinatura:** painel ardósia em 0.181, entre o máximo do combate (0.052) e o
+mínimo do diálogo (0.56). O alinhamento em linhas foi testado como sinal
+alternativo e **não** discrimina: o leque de combate é achatado no meio e chega a
+3 círculos no mesmo y.
+**Ressalva:** o limiar repousa sobre **uma** observação. Confirmar com mais
+amostras na sessão de rotulagem.
+**Vale o registro do método:** este estado era invisível nos 118 frames salvos.
+Observar o jogo rodando, mesmo sem o agente no controle, encontrou em 20 amostras
+o que nenhuma análise offline encontraria.
+
+## ADR-038: Limiar de texto do HUD adaptativo, não fixo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `hud.text_mask` calcula o limiar por Otsu sobre o canal de brilho
+(restrito a pixels de baixa saturação), mais uma margem de 55% da distância até o
+topo. Substitui o corte absoluto em `V > 185`.
+**Motivo:** o jogo **escurece o HUD inteiro** quando um painel está aberto. Com o
+corte fixo, o coração passava de 4 dígitos detectados para **zero** — descoberto
+comparando o frame da tela "Baralho" com um frame normal. Otsu acha a separação
+natural entre texto e fundo em qualquer iluminação.
+**Por que a margem acima de Otsu:** sozinho, ele deixa o limiar baixo o bastante
+pro "6" do coração grudar na barra de fração e falhar nos filtros de forma. Faixa
+segura medida (4 casos, duas iluminações): 0.45 a 0.60. Escolhido 0.55.
+**Efeito colateral bom:** o "4" do orbe, que produzia 2 chaves distintas de glifo
+entre frames, passou a produzir **uma só** em 24 amostras ao vivo.
+
+## ADR-039: Glifo por vizinho mais próximo (2026-08-29)
+**Decisão:** `GlyphBook.lookup` procura o glifo conhecido mais parecido dentro de
+72 bits, em vez de exigir chave idêntica.
+**Motivo:** o mesmo algarismo não produz sempre o mesmo mapa de bits. Os dígitos
+do coração medem 17px e são AMPLIADOS até a normalização 12x18, o que introduz
+ruído de quantização.
+**Limiar medido** sobre 216 bits: o mesmo dígito varia até 57 (o "6" é o pior
+caso); dígitos diferentes ficam a 92 no mínimo. 72 fica no meio, com ~1.27x de
+folga pros dois lados.
+
+## ADR-040: Caminho que ensina os algarismos do coração (2026-08-29)
+**Decisão:** `perception.read_hp_hybrid` — livro de glifos, caindo pro modelo e
+ensinando o que ele responder. Simétrico ao que a mana já tinha.
+**Motivo:** o HP **nunca era lido**. `read_hp` só consultava o livro, e nada
+ensinava os dígitos do coração, então o dado que a ADR-036 injeta no prompt de
+combate ficava sempre ausente — o recurso estava morto na prática.
+**Como apareceu:** observando o jogo ao vivo. Vinte amostras mostraram `HP=None`
+em todas, enquanto a mana era lida corretamente. O teste unitário não pegava
+porque ele mesmo ensinava o livro antes de ler.
+**Verificado ao vivo:** depois da correção, HP=(61, 61) em todas as 6 amostras
+seguintes, com o modelo chamado uma vez só.
+
+## ADR-041: Esperar o efeito, não um tempo fixo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** a travessia da mão substitui o `sleep(post_dpad_settle_s)` por
+captura repetida até o cursor sair do lugar, com teto de 0.8s.
+**Motivo, medido antes de mexer:** cronometrando cada operação de um passo da
+travessia contra o jogo aberto —
+
+| operação | custo |
+|---|---|
+| captura + salvar PNG | 78 ms |
+| `cv2.imread` | 13 ms |
+| `detect_card_slots` | 3.3 ms |
+| leitura de mana/HP em cache | ~1.6 ms |
+| **`sleep` fixo pós-D-pad** | **400 ms** |
+
+O sleep respondia por **81%** do custo. Um turno de 6 cartas jogando 4 dava ~22s,
+acima da meta de 15s. Com a espera adaptativa o passo cai de ~824ms para ~424ms.
+**O ganho de robustez importa mais que o de velocidade:** tempo fixo erra nos dois
+sentidos — longo demais quando o jogo responde rápido, curto demais quando ele
+demora, e aí a leitura acontece sobre um frame ainda em animação. Esperar o efeito
+observável não tem esse problema.
+**Não mexemos em `GAMEPAD.between_actions_s`** (250ms, dentro de `press`): é
+timing de gamepad validado no jogo, e mudá-lo às cegas é o oposto do princípio
+acima.
+**Teto de 0.8s:** atingido só quando o cursor realmente não se move — na ponta do
+leque, onde a travessia deve mesmo terminar.
+
+## ADR-042: Cursor posicionado por identidade, não por índice (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `perception.seek_card` anda com ←/→ até a carta em destaque **ser** a
+escolhida, conferindo a identidade pelo `CardDB` a cada passo. Substitui
+`select_and_confirm(alvo - cursor)`.
+**Motivo — bug latente:** o agente calculava o delta, navegava e apertava X **sem
+conferir onde o cursor tinha parado**. Com o índice errado por qualquer razão
+(contagem, oclusão, carta comprada no meio do turno), ele jogava a carta errada em
+silêncio. Não havia nenhuma verificação entre decidir e executar.
+**Efeito de desempenho:** o custo de posicionar cai de uma travessia completa
+(~2.5s numa mão de 6) para ~0.9s, porque a distância média até o alvo é ~1/3 da
+mão. Isso **habilita** dispensar a travessia entre jogadas, mas não a dispensa
+sozinho — quem faz isso é a ADR-043.
+
+> **Correção (2026-08-29):** a versão original desta ADR e a mensagem de commit
+> que a acompanhou afirmavam que a travessia entre jogadas já estava dispensada.
+> Não estava: `handle_combat` continuava chamando `scan_combat_hand` a cada
+> entrada. O ganho descrito era projetado, não medido no código entregue.
+> Implementado em seguida na ADR-043.
+**Cartas de mesmo nome são intercambiáveis:** se a mão tem dois "Tomo Vazio",
+jogar qualquer um dá no mesmo, então parar no primeiro que casar é correto — e
+resolve de graça a ambiguidade que uma busca por índice teria.
+**Falha com segurança:** se a carta destacada não estiver no cache, ou não
+pertencer à mão conhecida, devolve False sem apertar X, e o próximo passo do loop
+refaz a travessia. Melhor não jogar do que jogar errado.
+
+## ADR-043: Mão reaproveitada entre jogadas do mesmo turno (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent._HAND` guarda a mão conhecida. Nas entradas seguintes em
+combate, só mana e HP são relidos (~95ms); a lista de cartas vem do cache, menos
+a que foi jogada. Zerado em toda transição de estado e sempre que o
+posicionamento falha.
+**Motivo:** jogar uma carta só a remove da mão — refazer a travessia inteira
+depois disso custava ~2.5s numa mão de 6 e não acrescentava informação nenhuma.
+**Por que é seguro:** `seek_card` (ADR-042) confere a identidade da carta antes de
+confirmar. Se a mão mudou de um jeito que não prevemos — carta comprada no meio
+do turno, por exemplo — ele não encontra a carta esperada, devolve False, o cache
+é esquecido e o passo seguinte refaz a travessia. O cache degrada pra travessia,
+nunca pra jogada errada.
+**Efeito:** turno de 6 cartas jogando 4 passa de ~20s para ~13s, dentro da meta
+de 15s. Combinado com a ADR-041 (espera adaptativa), o turno saiu de ~22s.
+**Nota de estilo:** estado mutável em nível de módulo é feio, mas os handlers
+recebem apenas `memory` e mudar essa assinatura por causa de um só handler seria
+pior. `forget_hand()` torna o ciclo de vida explícito e testável.
+
+## ADR-044: Remoção do código órfão da refatoração (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** apagados os schemas e prompts que a migração para CV determinística
+deixou sem uso.
+
+**Schemas removidos** (`Card`, `Enemy`, `CombatState`, `MapDirection`,
+`MapAction`, `ChestAction`, `MapNode`, `MapState`): descreviam a percepção de
+combate e o mapa como grafo de nós, ambos substituídos. `src/schemas.py` foi de
+149 para 83 linhas.
+**Mantidos** `LevelUpOption` e `ShopItem`, que parecem órfãos numa busca simples
+mas são usados dentro do próprio arquivo por `LevelUpState`, `ChestState` e
+`ShopState` — todos vivos.
+
+**Prompts removidos** (`count_cards.txt`, `map.txt`, `detect_state.txt`,
+`combat.txt`): a versão anterior de `docs/prompts.md` dizia que eles ficariam
+"para referência histórica". Está errado — um prompt que descreve uma abordagem
+aposentada engana quem abre o diretório procurando o que o agente usa hoje. O
+motivo de cada aposentadoria está na ADR correspondente e o conteúdo está no git.
+
+**`input_exec.take_money_from_chest`**: só chamava `gamepad.cancel()`, e
+`handle_chest` já chama `input_exec.cancel()` direto.
+
+**Verificação:** 121 testes passando e o replay sobre 160 frames com 0 erros
+depois da remoção.
+
+## ADR-045: Falha rápida quando o runner do modelo morre (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** erro de transporte cujo texto indica runner morto dispara uma sonda
+de texto curta (10s). Se a sonda também falha, `ask_vlm` levanta
+`ModelUnavailableError` na hora, e o agente encerra com código 3 e mensagem
+acionável em vez de tratar como falha de parse.
+**Motivo, observado numa execução real:** rodando o replay com o modelo, o runner
+do Ollama morreu (`model runner has unexpectedly stopped`) e **toda chamada
+seguinte queimava 3 tentativas de ~42s** — mais de 2 minutos por passo, com o
+agente aparentando estar travado. Não havia nada no código que distinguisse "esta
+chamada falhou" de "o modelo não está rodando".
+**Diagnóstico descartado:** a mensagem do Ollama culpa limitação de recurso, mas
+`nvidia-smi` mostrava **13.7 GB livres de 16.3 GB**. Não era VRAM. O `/api/ps`
+mostrava zero modelos carregados: o runner tinha morrido e ficado morto.
+**Não reproduzível sob demanda:** testando depois, imagens de seis formatos
+sintéticos e seis recortes reais de carta passaram todas. Provavelmente o gatilho
+foi um `GGML_ASSERT` no encoder visual sobre alguma imagem específica, que
+derrubou o runner e deixou o servidor num estado ruim. A defesa vale
+independentemente da causa.
+**Efeito colateral bom da investigação:** os recortes de carta agora leem bem —
+`Gatti Amari` mana=1, `Phiera Der Tuthello` mana=3, `Faca` mana=0. Comparado com
+o cache poluído de antes (`Pughnala`, `Bastardato`, vários `mana: None`), confirma
+que a correção do recorte (ADR-022) e do canto do custo no prompt surtiram efeito.
+
+## ADR-046: Estado `notice` — saída de emergência no prompt de diálogo (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `detect_dialog.txt` ganha a opção `"notice"`, para painéis que são só
+texto e um botão. Handler aperta X.
+**Motivo, medido:** testando o prompt contra os 12 frames de diálogo que existem
+— algo que nunca tinha sido feito, porque o replay com modelo só rodou agora — ele
+respondeu **"level_up" para todos os 12**, inclusive pro painel "Nenhum controle
+detectado". O prompt oferecia cinco telas de recompensa e nenhuma saída, então
+qualquer painel não mapeado era forçado a virar uma delas. O agente então tentava
+escolher recompensa numa tela sem opção nenhuma.
+**Resultado:** com a opção adicionada, **12/12 corretos** — os 11 de level up
+continuam certos e o aviso sai como `notice`.
+**Fecha parte de uma lacuna dada como bloqueada:** `jogo.md` descreve que a
+evolução de carta abre *"uma tela, aperta X, aparece outra, aperte X novamente"*.
+São exatamente painéis de aviso. Eu tinha registrado que isso precisaria de frames
+reais; não precisava — precisava de uma opção honesta no prompt.
+**Princípio geral:** prompt de múltipla escolha sem escape transforma "não sei" em
+resposta errada com cara de certeza. Toda lista fechada de opções que vai pro
+modelo merece uma saída.
+
+## ADR-047: Telas de escolha lidas carta por carta (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `perception.read_choices` detecta os círculos de custo no painel
+central, recorta cada carta e lê com `card_scan.txt` — o mesmo caminho já
+validado no combate. O prompt de tela inteira (`level_up.txt`, `chest.txt`) vira
+reserva pras telas sem cartas.
+**Motivo:** testando `level_up.txt` contra três telas reais — algo nunca feito
+antes — o caminho de tela inteira errava o custo de **5 das 10** cartas, devolvia
+descrições de um dígito ("1", "5"), inventava `mana=-1` e apontava a carta
+selecionada errada. Mesma causa raiz do bug original de combate: a carta fica
+minúscula depois do resize pra 768px.
+**Resultado medido:** custo correto em 8-10 de 12, descrições reais ("Adicione 2
+Mana.", "Cause 45 de dano. Chance de explodir.") e **carta selecionada 3/3**.
+Os erros restantes mudam de carta entre execuções — são ruído estocástico do
+modelo, não falha sistemática.
+
+**Seleção por ALTURA, não por tamanho:** cartas de bônus trazem um orbe
+decorativo maior que qualquer círculo de custo, e o critério de tamanho apontava
+elas. Medido: a selecionada fica 24-30px acima das demais, e o orbe do bônus fica
+no nível das não-selecionadas.
+
+**Escala pela mediana:** usar o lado do orbe do bônus inflava o recorte dela pra
+296x368 contra ~180x230 das normais, e o excesso de contexto piorava a leitura.
+
+**Confirmação de que 4 opções existem:** um dos frames tem quatro cartas, e
+`jogo.md` menciona "Aumente sua Sorte para uma chance de ter 4 escolhas". A
+detecção acertou a contagem nos três.
+
+## ADR-048: Custo de mana implausível vira `None` (2026-08-29)
+**Decisão:** `CardScanFrame` valida `mana` em 0..9; fora disso, `None`.
+**Motivo:** o modelo devolveu `mana=-1` lendo uma carta de bônus, onde o "-1" é o
+**efeito** ("custo de mana reduzido em 1"), não o custo. Sem a validação isso
+chegaria a `combat.validate`, que compara `custo > mana` — e `-1` passa em
+qualquer comparação, aprovando a carta como se sempre coubesse.
+**Princípio:** saída de modelo que viola uma regra conhecida do jogo deve virar
+"não sei", não ser propagada. `None` já tem tratamento em todo o caminho.
+
+## ADR-049: `deck` exige HUD presente (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o veredito `DECK` passa a exigir `hud=True` além do painel ardósia.
+**Motivo — regressão que eu mesmo introduzi:** o limiar da ADR-037 repousava sobre
+uma única observação, e eu registrei isso como risco. O risco se materializou: o
+**menu principal** fica em 0.104 de ardósia, acima do corte de 0.10, e passou a ser
+classificado como baralho. O agente apertaria quadrado no menu principal.
+**Por que HUD e não um limiar mais alto:** ajustar o número seria empurrar o
+problema (0.104 e 0.181 não são uma separação confortável com uma amostra de cada).
+O HUD é uma **regra do jogo**: só dá pra abrir o baralho dentro de uma run, e o
+menu principal acontece fora. Coração e orbe presentes separam os dois por
+construção, não por calibração.
+**Encontrado assim:** procurando frames que caíssem em `detect_other` pra testar
+aquele prompt. Deram zero — e zero era o sintoma, não o resultado.
+
+## ADR-050: Saída de emergência também em `detect_other` (2026-08-29)
+**Decisão:** `detect_other.txt` ganha `"notice"` e uma instrução explícita de não
+chutar `game_over`.
+**Motivo:** mesma falha de desenho da ADR-046, com consequência pior. As cinco
+opções eram title / menu / game_over / stage_complete / game_complete, e
+`handle_game_over` levanta `SystemExit`. Uma tela desconhecida forçada em
+`game_over` **mata uma run que estava indo bem**.
+**Assimetria deliberada no prompt:** errar pro lado de `notice` custa um X apertado
+à toa; errar pro lado de `game_over` custa a partida. O prompt diz isso.
+
+## ADR-051: Custo ilegível é escolha de último recurso (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `fallback_index` só escolhe carta com `mana=None` quando não há
+alternativa. A leitura de carta repete uma vez quando o custo sai ilegível, e o
+prompt de combate avisa explicitamente sobre `"mana": null`.
+**Motivo — achado rodando a cadeia completa pela primeira vez:** montei uma mão a
+partir de frames reais (CV → recorte → leitura → prompt → decisão → validação) e
+o modelo produziu 3 jogadas legais em 3, com raciocínio coerente. Mas uma das
+cartas veio com `mana=None`, e numa das execuções o modelo escolheu justamente
+ela.
+**Por que isso é perigoso:** `validate` não bloqueia custo desconhecido — não dá
+pra provar que a carta é cara demais. Ali sobrava mana e deu certo; com mana
+apertada o jogo recusaria a jogada **em silêncio** e o turno travaria, sem nada no
+log dizendo o porquê.
+**Assimetria:** não bloquear é certo (não sabemos que é ilegal), mas *escolher* de
+propósito é apostar. Entre uma carta que sabemos jogável e uma que não sabemos, a
+certa é a conhecida.
+**Não resolve o ruído do modelo:** nomes ainda saem com erro ("Pardan" por
+"Pardal", "Tophello" por "Tuphello"). Isso é inofensivo — a identidade só precisa
+ser consistente pra `seek_card` funcionar, e o hash do `CardDB` não depende do
+texto.
+
+## ADR-052: Agir exige o jogo em primeiro plano (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent._require_focus` verifica `GetForegroundWindow` antes de cada
+passo e levanta `GameNotFocusedError` (subclasse de `NotTheGameError`, já tratada
+como fatal pelo loop). Dispensado quando o gamepad está em dry-run — no replay os
+frames vêm de arquivo.
+**Motivo — observado ao vivo:** durante uma sessão de observação, a mana saiu
+`None, None, 24, 4, 8, 3, 3...`. Vinte e quatro de mana não existe no jogo.
+Capturando e inspecionando o recorte do coração, apareceu texto da **loja da
+Steam**: "TEMPO DE JOGO / nas duas semanas: 4,8 h / Total: 39,3 h". Os "24" e "8"
+eram os números de tempo de jogo da Steam sendo lidos como mana.
+**A causa não era o `find_game_window`:** ele achou a janela certa (uma só com
+esse título, 1280x720 na posição correta). A causa é mais fundamental — **`mss`
+captura uma REGIÃO DA TELA, não o conteúdo da janela**. Qualquer coisa por cima do
+jogo entra no frame, e a assinatura de CV pode confundir isso com um estado real:
+neste caso a página da Steam passou por `combat`.
+**Por que foco é a checagem certa, e não uma assinatura mais rígida:** o gamepad
+virtual só chega na janela focada. Agir sem foco seria inútil mesmo que a captura
+estivesse correta. A pré-condição já era necessária; ela só não estava escrita.
+**Limitação conhecida:** foco não garante ausência de sobreposição (um overlay
+sempre-no-topo continua entrando). O `NOT_GAME` da ADR-022 segue como segunda
+linha.
+
+## ADR-053: Teto no resumo da memória (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `Memory` limita o resumo a 24 linhas / 4000 caracteres, na escrita e
+também na leitura. O corte mantém o FIM — o mais recente é o que orienta a
+próxima decisão.
+**Motivo — bug severo, encontrado medindo:** o `notes.md` desta máquina estava com
+**254 mil caracteres**, e `agent._memory_block` injeta `summary()` inteiro em toda
+decisão de combate e de escolha. Eram **~63 mil tokens por prompt**, que nenhum
+contexto comporta. As decisões que testei funcionaram só porque passei
+`memory=None`.
+**Causa:** o accordion só comprimia quando `summarize_fn` funcionava. A versão sem
+LLM fazia `prior_summary + últimos 20 eventos` — **acrescentava** a cada colapso e
+nunca encolhia. Não era accordion, era acumulador. E `default_memory()` é chamado
+sem `summarize_fn` no replay e em qualquer caminho que não queira gastar modelo.
+**Por que cortar também na leitura:** um `notes.md` herdado de versão anterior (ou
+crescido por outro caminho) não pode estourar o prompt de quem só quis ler. Defesa
+nos dois lados.
+**Medido depois:** o mesmo arquivo de 254 KB passa a render 2.286 caracteres
+(~571 tokens) — redução de 111x. E 200 eventos sem LLM mantêm o resumo estável em
+~2.200 caracteres, em vez de crescer indefinidamente.
+**Lição:** o que vai dentro de um prompt precisa de teto por construção. "O
+accordion cuida disso" era verdade só no caminho feliz.
+
+## ADR-054: Memória injetada filtrada por relevância (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `_memory_block` injeta só eventos de estados que orientam decisão
+(combate, level up, baú, fim de fase) e descarta transições de tela. Navegação no
+mapa e destravamentos deixam de ir pra memória — o `loguru` continua registrando.
+**Motivo — medido, depois da ADR-053:** com o teto no resumo, o bloco caiu pra 578
+tokens, mas isso ainda era **45% de um prompt de combate de 1292 tokens**. Olhando
+o conteúdo: 15 eventos de navegação no mapa, 8 de destravamento, 1 de transição —
+e **zero de combate**. Era histórico irrelevante disputando espaço com a mão de
+cartas.
+**Causa:** `handle_map` gravava um evento por passo, e cada passo dura ~1s. Em
+qualquer run, a navegação afoga tudo o mais. Memória de run e diário de bordo são
+coisas diferentes; estavam no mesmo lugar.
+**Transições também saem:** "transição → combat" marca a estrutura da run e é útil
+no arquivo, mas não diz nada sobre O QUE decidir.
+**Medido:** 578 → 18 tokens no mesmo `notes.md`. Somando a ADR-053, o bloco saiu
+de ~63.580 para ~18 tokens.
+**O que sobra é o que importa:** "combate: jogou Otto — combo crescente",
+"level up: idx=0 (sinergia com o deck)". Continuidade de plano, que era o motivo
+da ADR-020 existir.
+
+## ADR-055: Variação de grafia da ação é normalizada (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `CombatAction.acao` normaliza camelCase, espaços, hífens e
+maiúsculas antes de validar contra o literal.
+**Motivo — achado no log:** das 15 falhas de `CombatAction` registradas, 14 foram
+o incidente do runner morto (ADR-045) e **1 foi o modelo respondendo
+`jogarCarta`**. A intenção estava certa e só a grafia errada, mas a validação
+recusava — queimando um ciclo de repergunta (~2s) e contando como jogada ilegal na
+métrica do bench.
+**Limite deliberado:** normalizar grafia não é aceitar qualquer coisa. Ação
+desconhecida (`descartar_mao`) continua recusada; só a forma da mesma palavra é
+tolerada.
+
+## ADR-056: Ampliar o recorte da carta NÃO melhora a leitura (resultado negativo)
+**Data:** 2026-08-29
+**Contexto:** o log mostra que **13% das leituras de carta voltam com mana
+ilegível**. Como `VLM_IMAGE_MAX_SIDE=768` só reduz imagem e um recorte de carta
+tem ~230x320, levantei a hipótese de que o dígito estava abaixo da resolução
+legível.
+**Testado:** as mesmas quatro cartas, com gabarito, lidas em 1x, 2x e 3x.
+
+| escala | tamanho enviado | mana correta |
+|---|---|---|
+| 1x | 331x266 | 4/4 |
+| 2x | 662x532 | 3/4 |
+| 3x | 993x798 (reduzido a 768) | 4/4 |
+
+**Conclusão: escala não ajuda.** O erro em 2x é ruído, não efeito de resolução — e
+os nomes variando entre execuções da mesma carta ("Tumphello" / "Tuphello" /
+"Tuhello", "Pardal" / "Pardalado" / "Pendrin") confirmam que a variação é
+estocástica.
+**Registrado como negativo de propósito:** sem isso, a hipótese seria testada de
+novo. O caminho pros 13% restantes é **outro modelo**, medível com
+`python -m src.bench`, não pré-processamento de imagem.
+**Mitigação que fica:** a segunda leitura quando o custo sai ilegível (ADR-051).
+Sendo as amostras independentes, 13% viram ~1,7%.
+
+## ADR-057: O bench declara a própria margem de erro (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o relatório imprime `taxa±margem` (95%), o default de cenários sobe
+de 20 para 50, e o rodapé diz explicitamente que diferença menor que a margem não
+é diferença.
+**Motivo — descoberto tentando medir uma melhoria:** rerodei o bench com a mesma
+seed depois de mudar o prompt de combate e normalizar a grafia da ação, pra ver
+se as mudanças ajudaram. Deu **legal 92%→96%, regra 60%→48%**. Parecia que uma
+métrica subiu e a outra despencou.
+**Com n=60, as duas caem no meio: 92% e 55%.** As mudanças de prompt não moveram
+nada mensurável — as execuções de n=25 estavam apenas oscilando.
+**O achado é sobre o instrumento:** a baseline da ADR-032 foi registrada com n=25
+e uma ressalva de "±10pp" que eu mesmo estimei mal. A margem real ali é ~±20pp na
+aderência à regra. O número foi publicado com precisão que não tinha.
+
+| n | margem em torno de 55% |
+|---|---|
+| 10 | ±31pp |
+| 25 | ±20pp |
+| 50 | ±14pp |
+| 100 | ±10pp |
+
+**Por que isso importa pro projeto:** a decisão de trocar de modelo repousa
+inteiramente nesta métrica. Comparar dois modelos com 25 cenários cada produziria
+uma "diferença" que é ruído — e a conclusão errada seria registrada como medida.
+
+## ADR-058: Alvos restritos à componente conexa do jogador (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `frontier_targets` e `distant_floor` só devolvem pontos ligados ao
+jogador. `minimap.reachable` calcula essa componente.
+**Motivo:** o minimapa mostra salas **já reveladas mas ainda sem corredor aberto**.
+Medido no frame de referência: o piso tem **15 componentes conexas**, e a do
+jogador é uma delas. Alvos nas outras são visíveis e inalcançáveis — o BFS gasta a
+busca inteira e devolve None, e o planejador some com o alvo sem explicação.
+
+## ADR-059: Último degrau da navegação cobre o fim de fase (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `nav.plan` ganha um quarto alvo — o piso conhecido mais distante do
+jogador — depois de inimigo, chefe e fronteira.
+**Motivo — testado por simulação, sem frame:** não existe frame de fim de fase no
+repositório, mas o estado é reproduzível apagando os ícones do mapa real e
+zerando a névoa. Feito isso, **`plan` devolvia None** e `handle_map` andava pra
+frente às cegas — até o antitravamento abortar a run, justamente no momento em
+que havia uma fase pra avançar.
+**Cascata verificada:**
+
+| situação simulada | alvo escolhido |
+|---|---|
+| mapa original | inimigo mais próximo |
+| inimigos derrotados | chefe |
+| inimigos e chefe derrotados | explorar fronteira |
+| tudo derrotado, mapa revelado | procurar a saída da fase |
+
+**Limite honesto:** isto não *detecta* a saída. `jogo.md` diz que ela é um quadrado
+preto no minimapa, e sem um frame não dá pra escrever esse detector com
+honestidade. Andar pro ponto conhecido mais distante move o agente por regiões que
+ele não percorreu, o que é estritamente melhor que andar pra frente às cegas.
+**Método que vale registrar:** dei este caminho como bloqueado por falta de frames
+em sessões anteriores. Estava errado — apagar ícones de um frame real simula o
+estado e expõe a falha. Nem toda lacuna de dados precisa esperar por dados.
+
+## ADR-060: A ausência de opções é o sinal de baú vazio, não o campo `tipo`
+**Data:** 2026-08-29
+**Decisão:** `handle_chest` decide pelo conteúdo — sem opções, saca dinheiro; com
+opções, escolhe. `read_choices` passa a devolver `tipo` inferido (bônus se alguma
+opção não tem custo, senão carta).
+**Motivo — regressão que eu mesmo introduzi na ADR-047:** ao trocar a leitura das
+telas de escolha pra recorte carta a carta, `read_choices` passou a devolver
+`opcoes` e `indice_selecionada` mas **não `tipo`**. E `handle_chest` fazia
+`data.get("tipo", "vazio")` — recebia "vazio", apertava quadrado e **descartava
+toda recompensa de baú**.
+**Como apareceu:** o handler de baú nunca tinha sido exercitado, nem com mock. Fui
+escrever o primeiro teste dele e o bug estava na primeira linha que li.
+**Por que a nova regra é mais robusta:** `tipo` é uma inferência que pode faltar ou
+vir errada; "há opções pra escolher" é observável e suficiente. Um baú de dinheiro
+não tem carta com círculo de custo, então `read_choices` devolve None e o prompt
+de tela inteira assume — que é o caminho certo pra "vazio" e "evolucao".
+**Padrão que se repete:** três das últimas correções foram regressões introduzidas
+por mim em rodadas anteriores desta mesma sessão. Refatoração larga sem teste no
+caminho de saída é onde elas nascem.
+
+## ADR-061: Sem cursor conhecido, não navegar (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `_choose_and_confirm` retorna sem agir quando `indice_selecionada` é
+None, em vez de assumir uma posição.
+**Motivo:** o fallback era `cursor = len(opcoes) - 1` — "está na opção mais à
+direita". Isso vem da mão de combate, onde o cursor de fato começa na ponta
+direita. Mas nas telas de escolha a selecionada é **a que sobe**, e medida em três
+frames reais ela estava no **índice 0**. Um único fallback não pode servir aos
+dois, e o que estava lá errava por `n-1` passos nas telas de escolha.
+**Por que o custo é assimétrico:** errar a navegação num baú ou level up escolhe a
+recompensa errada, e essa carta fica no deck pelo resto da run. Não é um turno
+perdido, é a run inteira desviada.
+**O que acontece ao não agir:** o passo seguinte recaptura. Se o cursor seguir
+ilegível, o antitravamento aperta X e leva a opção em destaque — que é um default
+razoável, e explícito, em vez de uma navegação às cegas.
+
+## ADR-062: Handlers de escolha ganham teste (2026-08-29)
+**Decisão:** `tests/test_chest.py` e `tests/test_level_up.py` cobrem os caminhos
+de baú e level up com percepção mockada.
+**Motivo:** eram os handlers que decidem o deck da run e **nunca tinham sido
+exercitados, nem com mock**. O primeiro teste que escrevi já encontrou a ADR-060
+(baú descartando recompensa). O segundo encontrou esta ADR-061.
+**Sinal:** quando escrever o primeiro teste de um caminho acha bug na primeira
+leitura, o caminho estava sendo mantido por suposição. Os que faltam agora são
+`handle_stage_complete` e `handle_game_complete`, ambos de uma linha.
+
+## ADR-063: Perder o foco espera, não aborta (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `GameNotFocusedError` é tratada antes de `NotTheGameError` no loop:
+aguarda 2s e tenta de novo, até 30 vezes (~1 minuto). Só então desiste.
+**Motivo:** `GameNotFocusedError` herda de `NotTheGameError` (ADR-052), e o loop
+tratava a base como fatal — **alternar de janela por um segundo matava a run**.
+Perder foco é transitório e recuperável; "a captura mostra outro programa" não é.
+Estavam no mesmo balde porque o parentesco entre as exceções foi escolhido pela
+semântica ("não é o jogo") sem olhar o tratamento.
+**Assimetria de custo:** esperar por engano custa alguns segundos; abortar por
+engano custa a run inteira. O limite de ~1 minuto evita o outro extremo, de
+esperar pra sempre por um jogo que foi fechado.
+
+## ADR-064: O loop principal ganha teste (2026-08-29)
+**Decisão:** `tests/test_loop.py` cobre limite de iterações, os três códigos de
+saída, o contador de falhas consecutivas e a liberação do gamepad no `finally`.
+**Motivo:** era o controle externo que decide se uma run sobrevive a um problema,
+e nunca tinha sido exercitado. Ler o código pra escrever o teste foi o que
+expôs a ADR-063.
+**Coberto:** que o contador de falhas **zera a cada passo bem-sucedido** (uma
+falha isolada não pode somar com outra dez minutos depois), e que
+`gamepad.reset()` roda mesmo quando o loop aborta.
+
+## ADR-065: Bônus detectados na borda do bloco, sem agir ainda (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `minimap.find_bonuses` localiza os pontos de bônus e o overlay de
+debug os marca. `nav.plan` **não** os usa como alvo.
+**Motivo — confirma a observação original do projeto:** `jogo.md` diz que "as
+vezes eles ficam colado a paredes, então não são só blocos". Medido: os candidatos
+sobre o piso ficam a **0-3px da borda da sala**, não no centro da célula. O
+overlay mostra os losangos exatamente em cima das bordas.
+**Assinatura:** manchas de 4-6px no tom de ícone (cinza 136), sobre o piso e a até
+4px da borda. Os filtros de tamanho não se sobrepõem aos da caveira (13px).
+**Por que não agir ainda — decisão deliberada:**
+1. `jogo.md` classifica bônus como "totalmente ignorável, apenas pegue caso
+   estejam no caminho". O ganho é pequeno por construção.
+2. Pegá-los exige uma manobra que a navegação por células não faz: virar pra
+   **parede** e andar. O alvo não é andável, então o BFS não chega nele.
+3. A taxa de falso positivo não foi medida contra conjunto rotulado — a textura
+   do pergaminho cai no mesmo tom. Um falso positivo ao lado do jogador faria o
+   agente andar contra parede até o antitravamento disparar, gastando três
+   empurrões por nada.
+**O passo que torna isso mensurável** é a sessão de rotulagem: com o overlay
+marcando os candidatos, dá pra conferir quantos são bônus de verdade antes de
+escrever comportamento em cima deles. Detectar primeiro, agir quando houver
+número.
+
+## ADR-066: As CLIs que emitem input avisam sobre o foco (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `window.warn_if_unfocused` avisa quando o jogo não está em primeiro
+plano. Chamado por `src.input_exec --action` e `src.perception --scan-hand`,
+depois da contagem regressiva.
+**Motivo:** a ADR-052 fez o **agente** recusar agir sem foco, mas as ferramentas
+de linha de comando ficaram de fora — e elas emitem input de verdade.
+`--scan-hand` aperta ← várias vezes; `--action confirm` aperta X. A contagem
+regressiva delas **pede** pra focar o jogo, mas pedir não é conferir. É a mesma
+classe do bug do replay: a precondição existia de fato e não estava escrita em
+todos os lugares que precisavam dela.
+**Avisa em vez de bloquear, deliberadamente:** quem roda uma CLI dessas está
+depurando de propósito e às vezes quer ver o efeito noutro lugar. No agente, que
+roda sozinho por minutos, bloquear é certo; numa ferramenta manual, avisar basta.
+
+## ADR-067: Frames de debug rotacionados (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `capture.grab` mantém no máximo `FRAMES_KEEP` frames (default 400,
+~200 MB) e apaga os mais antigos. `0` desliga.
+**Motivo, medido:** cada captura escreve **502 KB**, e o agente captura várias
+vezes por passo (o loop, a travessia da mão, cada passo do `seek_card`). Projetado:
+uma run de 1h escreve **~2.7 GB**; uma de 3h, **~8 GB** — contra os 10 GB que o
+README pede de disco no total, dos quais 6 já são o modelo. A primeira run longa
+encheria o disco.
+**Por que rotação e não formato mais barato:** JPEG cortaria ~8x o tamanho, mas os
+detectores dependem de faixas de cor estreitas (o círculo de custo, o tom 136 dos
+ícones) e artefato de compressão mexe justamente nisso. Não vale arriscar a
+percepção pra economizar disco.
+**Os frames existem pra depurar o passado recente**, não pra arquivar a run.
+**Poda a cada 50 capturas**, não a cada uma: listar milhares de arquivos custaria
+mais que a própria captura.
+
+## ADR-068: Frames de gabarito versionados em `dataset/referencia/` (2026-08-29)
+**Decisão:** os 18 frames que a suíte usa como gabarito saíram de `frames/` e
+foram versionados.
+**Motivo:** eles viviam em `frames/`, que é **gitignored** — num clone novo os
+testes passariam a **pular em silêncio**, que é pior que falhar. A rotação da
+ADR-067 tornaria isso agudo: um gabarito apagado no meio de uma sessão longa
+produziria a mesma falha silenciosa, e sem aviso nenhum.
+**Efeito colateral bom:** o teste de integração do replay rodava sobre o conteúdo
+variável de `frames/` — media coisa diferente a cada execução, e as asserções
+eram limiares frouxos ("mais de 100 frames"). Agora roda sobre um conjunto curado
+e as asserções são exatas. A suíte inteira ficou **2.5x mais rápida** (26s → 10s).
+
+## ADR-069: Resumo impresso ao final da run (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `loop` imprime um resumo no `finally` — passos, telas visitadas,
+cartas jogadas, recompensas pegas, jogadas ilegais e destravamentos.
+**Motivo:** uma run terminava **em silêncio**. Toda a informação estava no log,
+mas ler centenas de linhas pra saber se o agente chegou a jogar uma carta é o
+tipo de atrito que faz ninguém olhar — e a primeira run de verdade ainda não
+aconteceu.
+**No `finally`, de propósito:** uma run que aborta é justamente quando mais se
+quer saber o que houve antes.
+**Duas linhas são diagnóstico, não estatística:**
+- **jogadas ilegais** > 0 significa que o modelo erra a aritmética de mana. É a
+  mesma medida do bench (ADR-032), agora colhida em jogo real.
+- **destravamentos** > 0 significa tela que nenhum handler cobre. Cada um aponta
+  pra um estado que falta mapear, e o número diz quanto tempo se perdeu ali.
+
+Ambas trazem a explicação junto quando são diferentes de zero, pra não exigir que
+quem lê saiba interpretar.
+
+## ADR-070: Verificação de pré-voo antes da run (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `agent.preflight` confere janela e modelo, mostra o que achou, e faz
+uma contagem de 5s antes de começar. Reprovar impede o loop de dar um passo.
+**Motivo — dois atritos de partida que a primeira run encontraria:**
+1. **Ollama fora do ar só aparecia na primeira decisão**, depois de três
+   tentativas com backoff. Vários minutos até a causa ficar visível, e ela apareceria
+   como falha de turno em vez de "o servidor não está rodando".
+2. **O agente esperava 0.5s pra começar.** Esse `boot_delay_s` existe pro driver
+   do gamepad inicializar, não pra uma pessoa alternar do terminal pro jogo — as
+   CLIs sempre tiveram contagem de 3s, o agente não tinha nenhuma. O primeiro
+   passo já caía na espera por foco (ADR-063).
+**O que reporta, verificado ao vivo:**
+
+    Janela: 1280x720 em (320, 191)
+    Modelo respondendo: qwen2.5vl:7b (visão) / qwen2.5vl:7b (texto)
+    Começando em 5s — traga a janela do JOGO pra frente...
+
+A linha do modelo mostra os dois nomes: quem configurou `TEXT_MODEL` confirma que
+pegou, e quem não configurou vê os dois iguais e entende por quê (ADR-031).
+
+## ADR-071: O failsafe que apareceu de graça (2026-08-29)
+**Data:** 2026-08-29
+**Observação, não decisão nova:** o agente recusa agir sem o jogo em primeiro
+plano (ADR-052). Como consequência, **alternar pro terminal o congela na hora** —
+e é assim que se para uma run às pressas.
+**Por que registrar:** a ADR-014, ao adotar o gamepad virtual, listou como
+trade-off aceito que "não há `pyautogui.FAILSAFE` global; mitigação: o gamepad só
+afeta a janela focada". Era mitigação passiva — se o agente enlouquecesse, não
+havia gesto pra pará-lo sem chegar no terminal, e chegar no terminal era
+justamente o problema.
+**A checagem de foco entrou por outro motivo** (a captura estava pegando a página
+da Steam) e resolveu isso sem querer: tirar o foco é o gesto, e o agente para
+antes mesmo de capturar. Está anunciado no README e virou regra no `CLAUDE.md` —
+não remover sem pôr outra coisa no lugar.
+
+## ADR-072: `Ctrl+C` é saída normal (2026-08-29)
+**Decisão:** `KeyboardInterrupt` é tratado no loop: registra, devolve 0, e deixa o
+`finally` soltar o gamepad e imprimir o resumo.
+**Motivo:** interromper com Ctrl+C é o uso esperado, não uma falha — e é
+justamente quando mais se quer ver o resumo do que aconteceu. Antes o traceback
+subia até o topo; o `finally` rodava, mas a saída ficava suja e o código de saída,
+errado.
+
+## ADR-073: Runs registradas em `logs/runs.jsonl` (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** o resumo da run também é gravado, uma linha por run, com o **motivo
+da saída**. `python -m src.agent --historico` mostra a tabela.
+**Motivo:** o resumo impresso (ADR-069) some no scrollback. Comparar duas runs é
+o sinal de progresso do projeto inteiro — "18 cartas jogadas contra 2" diz mais
+sobre o agente estar melhorando que qualquer teste da suíte, porque mede o que o
+projeto quer (jogar) e não o que o código faz.
+**O motivo da saída é o campo mais informativo:** distingue "rodou até o limite"
+de "morreu na primeira tela". Sem ele, duas runs de 24 passos parecem iguais
+quando uma terminou normal e a outra abortou por três falhas seguidas.
+**Exemplo do que a tabela mostra:**
+
+    quando              min  passos  cartas  recomp  ilegais  destrav  motivo
+    2026-08-29T23:21    2.0      24       2       1        3        2  três falhas seguidas
+    2026-08-29T23:21    4.0      61       9       2        1        1  interrompido (Ctrl+C)
+    2026-08-29T23:21    6.0      87      18       3        0        0  limite de iterações
+
+Lida assim: a terceira run foi 3.6x mais longa, jogou 9x mais cartas, e não
+precisou de nenhum destravamento nem produziu jogada ilegal.
+
+## ADR-074: Observação sem foco é dado inválido, não só inseguro (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `label --watch` pula a amostra quando o jogo não está em primeiro
+plano, e reporta quantas pulou.
+**Motivo — erro de raciocínio meu, exposto ao vivo:** ao pôr o aviso de foco nas
+CLIs (ADR-066), deixei o `--watch` de fora com o argumento de que ele "só observa,
+não emite input". O argumento estava errado: sem foco a observação não fica
+insegura, fica **inválida**.
+**O que aconteceu de fato:** uma sessão de 30 amostras com o jogo atrás de outra
+janela reportou `not_game`, `unknown`, e **mana de 104, 12 e 9** — lendo números
+de qualquer coisa que estivesse por cima. E como o `--watch` usa o caminho híbrido
+de leitura, **ensinou esses algarismos ao livro de glifos**.
+**O portão de dois votos conteve o estrago** (ADR-033): entraram `8` e `9` com um
+voto cada, e nenhum será servido. Foi bom vê-lo funcionar sob ataque real, mas
+proteção não é licença pra alimentar dado ruim de propósito.
+**O agente já estava protegido**: `_require_focus` roda antes de qualquer captura
+no loop (ADR-052). O buraco era só na ferramenta de observação.
+**Padrão que se repete:** três vezes nesta sessão uma precondição correta faltou
+em um dos lugares que precisava dela — o replay, as CLIs, e agora o watch. Escrever
+a regra num lugar não a aplica nos outros.
+
+## ADR-075: A rotulagem verifica se capturou o JOGO, não o foco (2026-08-29)
+**Data:** 2026-08-29
+**Decisão:** `label.capture_labeled` descarta o frame quando a assinatura é
+`NOT_GAME`, e `session` recusa começar nessa condição.
+**Motivo — bug crítico na ferramenta que eu vinha recomendando há sessões:** a
+rotulagem lê a tecla com `msvcrt.getch()`, o que **exige o terminal focado**.
+Então durante a rotulagem o jogo NUNCA está em primeiro plano, e `mss` captura o
+que estiver por cima. Com o jogo atrás do terminal, a sessão inteira gravaria
+prints do terminal rotulados como "combate" — e o gabarito que deveria medir o
+sensor mediria outra coisa.
+**Por que o foco não serve de guarda aqui, ao contrário do agente e do `--watch`:**
+nesses o foco no jogo é possível e desejável. Na rotulagem é impossível por
+construção. O que importa não é *quem tem o foco*, é *o que está na tela* — e a
+assinatura de CV responde exatamente isso.
+**Requisito real, agora dito na abertura da sessão:** o jogo precisa estar
+**VISÍVEL**, lado a lado ou em outro monitor. Visível e focado são coisas
+diferentes, e a ferramenta pedia a errada.
+**Recusa de saída, não no meio:** melhor não começar que descobrir depois de 50
+frames rotulados.
+**Terceira variação do mesmo padrão nesta sessão** (replay, CLIs, watch, agora
+rotulagem): a precondição certa depende do que a ferramenta faz, e copiar a regra
+de outra sem reexaminar produz guarda errado — ou nenhum.
+
+## ADR-076: Auditoria dos pontos que capturam ou emitem input (2026-08-29)
+**Data:** 2026-08-29
+**Motivo:** quatro vezes nesta sessão uma precondição faltou em um dos lugares que
+precisava dela — replay, CLIs, `--watch`, rotulagem. Achar a quinta do mesmo jeito
+(por acidente, ao vivo) seria desperdício. Enumerei todos.
+
+**Quem captura a tela:**
+
+| ponto | guarda | por quê esse |
+|---|---|---|
+| `agent._step` e tudo abaixo dele | `_require_focus` (bloqueia) | roda sozinho por minutos; agir sem foco é silenciosamente errado |
+| `label.watch` | foco (pula a amostra) | observar sem foco produz dado inválido |
+| `label.capture_labeled` / `session` | assinatura `NOT_GAME` | o terminal PRECISA do foco pra ler tecla; foco seria guarda impossível |
+| `perception --scan-hand` | `warn_if_unfocused` | ferramenta manual: avisar basta |
+| `capture --once` | nenhum, deliberado | o pedido é "tire um print da região", seja o que for |
+| `replay` | `set_dry_run` | lê de arquivo, não da tela |
+
+**Quem emite input:**
+
+| ponto | guarda |
+|---|---|
+| `gamepad.press` | `_dry_run`, antes do driver |
+| `agent` | `_require_focus` |
+| `input_exec --action` | `warn_if_unfocused` |
+| `gamepad --test` / `--press` | `warn_if_unfocused` (fechado nesta ADR) |
+
+**A regra que a tabela mostra:** o guarda certo depende do que a ferramenta faz e
+do que ela pode exigir. Bloquear onde roda sozinho; avisar onde há alguém olhando;
+checar o conteúdo onde o foco é impossível; nada onde o pedido é literalmente
+"capture a tela".
+
+## ADR-077: A tese do projeto, medida (2026-08-29)
+**Data:** 2026-08-29
+**Contexto:** a ADR-022 trocou a percepção do VLM por CV determinística com base
+numa **anedota** — "de 39 frames que são o mapa, ao menos 9 foram rotulados
+errado" — colhida de nomes de arquivo salvos pelo agente, não de medição
+controlada. A decisão central do projeto repousava sobre isso.
+**Decisão:** `src/ablation.py` põe os dois caminhos respondendo à MESMA pergunta
+sobre os MESMOS 18 frames, com gabarito conferido olhando cada imagem.
+
+| caminho | geral | só o expressável | mediana |
+|---|---|---|---|
+| CV | 18/18 (100%) | 16/16 (100%) | **5 ms** |
+| VLM aposentado | 36/54 (67%) | 36/48 (75%) | **561 ms** |
+
+**A coluna "só o expressável" existe pra ser justo:** `deck` e `not_game` foram
+descobertos DEPOIS que aquele prompt saiu de uso, então ele não tinha como
+acertá-los. Contar como erro seria trapaça. Mesmo excluindo-os, a diferença é
+**100% contra 75%, e 112x mais rápido**.
+**Achado extra:** o modelo não erra só a resposta, erra a FORMA. Devolveu
+`{"state": "combat"}`, `{"menu": "chest"}` e `{"estate": "chest"}` — chaves
+inventadas que o schema recusa. Cada uma dessas queima as três tentativas do
+retry antes de virar falha de turno.
+**O erro mais caro é o padrão, não a taxa:** o VLM confunde `map` com `combat` nos
+dois sentidos, que são justamente os dois estados que dominam o loop. Um erro em
+tela rara custa um passo; errar mapa/combate faz o agente rodar um scan de cartas
+no mapa — que é exatamente o que os frames históricos mostram tendo acontecido.
+**O gabarito não foi feito pela CV**, o que seria circular e daria 100% sempre.
+Cada estado saiu de olhar a imagem durante esta sessão.
+
+## ADR-078: "Nenhuma selecionada" é resposta, não falta (2026-08-30)
+**Data:** 2026-08-30
+**Contexto:** a primeira sessão de `--details` travou na segunda pergunta. O
+frame era um combate com 6 cartas e **nenhuma levantada** — o cursor estava fora
+da mão. A pergunta oferecia só "um número" ou "Enter pula", então a resposta
+certa ("nenhuma") só podia ser dada como se fosse uma falta.
+**O estrago:** `cursor: null` passava a significar duas coisas incompatíveis —
+"não há carta selecionada" (gabarito válido, e o caso que `detect_card_slots`
+mais precisa acertar) e "ninguém respondeu" (sem gabarito). Uma suíte de
+regressão que confunde as duas ou pune a CV por uma pergunta não respondida, ou
+apaga do conjunto o caso mais comum de `selected_idx is None`.
+**Decisão:** separar o valor da existência da resposta. Cada campo de detalhe
+grava o par `campo` + `campo_known`. `n` responde "nenhuma"; Enter continua sendo
+"não sei". `_sabe()` lê rótulos antigos sem o par pela convenção anterior (valor
+presente = respondido), então os frames já gravados continuam valendo.
+**Três consertos de UX que vieram junto:**
+1. **Captura antes de perguntar.** Antes, as perguntas vinham primeiro e o frame
+   era capturado depois — a pessoa respondia de memória sobre uma tela que ainda
+   não tinha sido salva, e a resposta era jogada fora quando a captura era
+   recusada.
+2. **Pergunta em 1-based, dado em 0-based.** "índice do cursor, 0 = mais à
+   esquerda" é jargão de programador na hora errada: quem responde está olhando
+   o jogo, não o array. A conversão fica num lugar só.
+3. **Meta de cobertura visível.** A sessão abre e fecha dizendo quanto falta por
+   estado, porque "é pra rotular o jogo todo?" precisava ter resposta na tela.
+   Não é: são ~41 frames, com peso em `combat` e `map` — os dois que a ADR-077
+   mostrou serem os mais caros de errar.
+**O palpite da CV continua aparecendo só DEPOIS da resposta.** Mostrar antes
+faria a pessoa concordar com ele, e o gabarito passaria a medir a CV contra ela
+mesma — o mesmo vício circular que a ADR-077 evitou no conjunto de referência.
+
+## ADR-079: O HP falhava só em combate, e a rotulagem achou (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** ao ligar mana e HP ao `_observed` da rotulagem (ADR-078), os dois
+frames já capturados deram resultados incoerentes: `read_hp` devolvia `(61, 61)`
+no frame de **mapa** e `None` no de **combate** — sendo que o coração mostra
+61/61 nos dois.
+**Causa, medida antes de mexer:** em combate o jogo desenha mais um indicador
+dentro de `HEART_BOX`, embaixo e à esquerda do coração. Os glifos, em coordenadas
+do patch:
+
+| linha | y | x | altura | leitura |
+|---|---|---|---|---|
+| HP atual | 31..48 | 51..65 | 17 | 61 |
+| HP máximo | 53..71 | 51..65 | 18 | 61 |
+| **intruso** | 71..93 | **26** | **22** | 1 |
+
+Três discriminadores possíveis: posição vertical, posição horizontal, altura.
+**Decisão:** `read_hp` passa a ler as **duas primeiras** linhas em vez de exigir
+exatamente duas. É o discriminador que não introduz número mágico: a docstring já
+dizia que "o coração empilha HP atual sobre HP máximo", então o que estiver
+abaixo do par não é o par. Encolher `HEART_BOX` foi descartado — a mesma caixa é
+recortada pra mandar ao modelo em `read_hp_hybrid`, e mudá-la mudaria o que o
+modelo vê.
+**Por que isso importa mais do que parece:** o estado afetado era **só o
+combate** — o único em que o HP entra na decisão (ADR-036). Nos outros o HP era
+lido corretamente e não servia pra nada. É a terceira vez que o HP quebra em
+silêncio no caminho até o prompt, e a primeira em que um teste sintético não
+teria pego: o frame precisava ser de combate real.
+**O achado veio da ferramenta, não de inspeção.** A regra que produziu isso é a
+da ADR-078 — toda pergunta de rotulagem aponta pra um campo que a CV produz.
+Ligar `cv_hp` ao `_observed` bastou pra a incoerência aparecer sozinha, antes de
+qualquer sessão de rotulagem acontecer.
+**Regressão:** `tests/test_digits.py` passa a usar o frame de combate versionado
+em `dataset/`, e afirma que a terceira linha continua aparecendo — se o jogo
+parar de desenhar o indicador, o teste avisa em vez de passar por acidente.
+
+## ADR-080: O custo da carta é CV, não VLM (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** perguntado por que a rotulagem pedia "mana" mas não o custo da
+carta. A pergunta expôs uma inconsistência com a própria ADR-022: o custo é **um
+algarismo dentro de um círculo que a CV já localiza**, ou seja, geometria. Mesmo
+assim ele chega hoje pelo `CardDB`, preenchido pelo VLM — a leitura fica presa à
+primeira aparição da carta e ao acerto do modelo naquela chamada.
+**Medição, antes de decidir.** Protótipo sobre o frame de combate do `dataset/`,
+usando só o que já existe (`detect_card_slots` + `text_mask` + `GlyphBook`):
+
+| carta | verdade | lido | distância ao glifo mais próximo |
+|---|---|---|---|
+| 1..4 | 1, 1, 1, 2 | 1, 1, 1, 2 | 60, 39, 15, 46 |
+| 5 | **0** | **6** | 63 |
+| 6 | **0** | None | 75 |
+
+**A máscara está perfeita** — a segmentação não precisou de ajuste nenhum. O que
+falta é **vocabulário**: os algarismos do círculo são um desenho diferente dos do
+HUD (o `0` tem corte diagonal), e o livro de glifos não os viu ainda. Pela
+ADR-033 isso se resolve sozinho: uma chamada de modelo por algarismo até
+aparecer duas vezes, e depois é local pra sempre.
+**Decisão:** `read_costs` entra em `src/vision/cards.py` como CV pura, e
+`cv_costs` entra no `_observed` da rotulagem com a pergunta correspondente. Não
+troco ainda o caminho do `CardDB` — a taxa medida é de UM frame, e o gabarito
+que autoriza a troca é justamente o que a sessão de rotulagem vai produzir.
+**Risco encontrado de passagem, e deixado registrado:** `_MAX_GLYPH_DISTANCE=72`
+deixou o `0` cortado casar com um `6` a distância 63, devolvendo **um número
+errado com confiança**, não `None`. As leituras corretas ficaram em 15..60, então
+a folga entre certo e errado é de 3 — pequena demais pra afinar com um frame só.
+Um custo errado faz `combat.validate` aprovar jogada impossível. Fica medindo até
+haver frames suficientes; a tabela de acerto por campo em `--summary` mostra isso.
+**Nota de UX que veio junto:** "mana" nomeava duas coisas diferentes. As
+perguntas agora dizem qual é qual — o que a carta CUSTA e o que você TEM.
+
+## ADR-081: A meta de cobertura precisa dizer o que VARIAR (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** "tá falando que preciso completar N imagens do combate, mas são de
+situações diferentes? não entendi." A tabela dava um número e nenhum critério.
+**O risco que isso corria:** doze frames do mesmo turno satisfazem `combat 12/12`
+e medem **uma** situação. A suíte passaria a reportar 100% sem nunca ter testado
+mão pequena, mão sem carta levantada, ou mana insuficiente — e um detector
+quebrado nesses casos passaria limpo.
+**Decisão:** `_VARIEDADE` acompanha `_META`, e a tabela imprime o que precisa
+mudar entre um frame e outro do mesmo estado. O número sozinho é meta de volume;
+o que a suíte precisa é cobertura de situação.
+
+## ADR-082: A oclusão da carta levantada é detectável num frame só (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** apontado que `read_costs` sempre erraria, porque a carta levantada
+tapa o círculo da vizinha à direita — o mesmo fato que motivou a travessia com
+print por carta. A observação está certa e o protótipo da ADR-080 só pareceu
+limpo porque o frame testado não tinha carta levantada. Sorte, não acerto.
+**O que a medição mostrou.** Vão em x entre círculos consecutivos, nos 14 frames
+de combate do `dataset/`:
+
+| situação | vão |
+|---|---|
+| logo após a carta levantada, quando há oclusão (4 casos) | 310, 321, 333, 345 |
+| **qualquer outro vão, em qualquer frame** | **≤ 146** |
+
+A separação é de 164px. Não é limiar frágil — o leque se recomprime quando uma
+carta sobe (os vãos normais caem pra 67-146), mas o buraco da oclusão fica numa
+ordem de grandeza distinta.
+**A confirmação independente:** os quatro frames `154xxx` são do **mesmo
+combate**. `154006402` tem a última levantada e mostra 6 círculos; os outros três
+têm uma do meio levantada e mostram 5. A mão é 6 nos quatro. A correção fecha os
+quatro em 6.
+**Decisão:** `CardSlots.hidden_idx` devolve a posição REAL do círculo tapado, e
+`hand_size` corrige a contagem **sem travessia**. `read_costs` passa a devolver a
+lista indexada por posição real, com `None` exatamente no índice tapado — antes
+os custos depois da levantada estariam deslocados de uma casa, o que é pior que
+faltar: um custo certo atribuído à carta errada.
+**O que NÃO foi resolvido, e está no teste.** Quando a levantada é a última
+VISÍVEL, não existe vão depois pra denunciar oclusão: o frame é idêntico entre
+"mão de 5 com a última levantada" e "mão de 6 com a quinta levantada". O
+`154032207` é exatamente esse caso e o detector devolve 5, sendo 6.
+`hidden_idx` devolve `None` ali, que significa "não sei" — não "não tem".
+**Consequência prática:** a travessia deixa de ser necessária pra CONTAR e passa
+a ser necessária só pra (a) resolver a ponta direita e (b) ler o custo da carta
+tapada. De N passos pra no máximo 1 confirmação — o que também ataca a queixa de
+lentidão. Trocar o scan por esse protocolo fica pra depois do gabarito.
+**`visible_total` não mudou de significado.** `src/vision/screen.py` usa ela pra
+classificar tela, e mexer no que ela quer dizer arrastaria a classificação junto.
+
+## ADR-083: A pergunta de rotulagem precisa apontar pro detector certo (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** ao revisar a tabela da ADR-078, `offered` (quantas cartas na oferta
+de level up / baú) apontava pra `cv_cards`, que vem de `detect_card_slots` — a
+caixa da **mão**. O painel central de escolha tem detector próprio,
+`detect_choice_slots`, com outra caixa e outro critério de seleção (altura, não
+tamanho).
+**O estrago:** a pergunta mediria a CV lendo a caixa errada, e registraria como
+erro do detector uma coisa que é erro da tabela. Um gabarito que culpa o
+componente errado é pior que gabarito nenhum.
+**Decisão:** `_observed` grava `cv_choice_cards` e `cv_choice_cursor` do detector
+do painel, e as perguntas de escolha apontam pra eles.
+**O teste que passa a pegar isso** troca a lista escrita à mão de campos válidos
+(que já ficou desatualizada duas vezes em dois commits) por uma invariante que
+não precisa de manutenção: **duas perguntas do mesmo estado não podem medir o
+mesmo campo**. Era exatamente a assinatura desse bug — `offered` e `hand_size`
+disputando `cv_cards`.
+
+## ADR-084: O guarda da rotulagem pergunta ao sistema, não à CV (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** relatado que a rotulagem recusava capturar menu e loja dizendo que
+"não está reconhecendo o jogo". Estava mesmo — e o guarda estava certo pelo seu
+próprio critério, que era o errado.
+**A armadilha circular.** O guarda (ADR-075) perguntava à CV: *esta tela parece o
+jogo?* Recusava quando a resposta era `NOT_GAME`. Mas as telas que MAIS precisam
+ser rotuladas são exatamente as que a CV ainda não reconhece — título, menu,
+loja, game over. **O guarda recusava o material necessário pra consertar o
+próprio ponto cego.** O conjunto de referência não tem nenhum frame desses cinco
+estados, e agora dá pra ver por quê.
+**Por que o conteúdo não separava.** Tentei um discriminador por riqueza de cor,
+achando que terminal seria pobre e jogo seria rico. Medido (cores quantizadas em
+16 níveis por canal): o frame `not_game` do dataset — que é o VS Code com o
+painel do Ollama por cima — deu **762**, contra 818-1414 nas telas de jogo. 56 de
+separação. Descartado.
+**Decisão: perguntar ao Windows.** `window.game_is_visible` amostra cinco pontos
+dentro da client area e chama `WindowFromPoint` em cada um; se a janela raiz em
+todos eles é a do jogo, a captura vai pegar o jogo. Isso troca uma heurística
+sobre pixels por um fato do sistema operacional, e responde a pergunta certa —
+*o jogo está no topo nos pixels que vou capturar?* — em vez da pergunta errada —
+*eu reconheço o que está desenhado ali?*
+
+Cinco pontos, não um: o centro sozinho deixaria passar um balão de notificação
+cobrindo um canto do frame.
+**A dúvida é explícita.** Sem janela localizada por Win32 (ou fora do Windows),
+`game_is_visible` devolve `None`, e aí a rotulagem cai na checagem por conteúdo
+antiga — com o ponto cego de volta, mas avisando. Melhor que capturar o terminal
+em silêncio.
+**Risco que fica em aberto, agente-side.** `states.detect_state` **levanta
+`NotTheGameError`** quando a assinatura dá `NOT_GAME`. É a mesma confusão entre
+"não é o jogo" e "é uma tela do jogo que eu não reconheço", só que num lugar onde
+o efeito é abortar o turno. Não dá pra dimensionar sem frame real de cada tela —
+`stage_complete` e `game_over` podem ou não cair ali, dependendo do painel. Como
+`stage_complete` é literalmente o objetivo do projeto (zerar a fase 1), esse é o
+motivo mais forte pra rotular esses cinco estados, que agora é possível.
+
+## ADR-085: Os dois baús do minimapa, recortados dos frames da sessão (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** o item 3 do roadmap — "baú, obstáculo e saída de fase no minimapa"
+— estava parado por falta de sprite. A sessão de rotulagem entregou 10 mapas, e
+dois deles são da **fase 2/4**, que tem ícones que a fase 1 não tem.
+**O que apareceu.** Deixando a CV achar os blobs no tom de ícone (cinza 128-146)
+em vez de eu chutar coordenada, e olhando o overlay numerado: além das caveiras e
+do chefe, **dois** ícones de baú, não um.
+
+| ícone | forma |
+|---|---|
+| `bau` | caixa de tampa reta com trinco |
+| `bau_chefe` | tampa arredondada, X decorativos nas laterais |
+
+O baú comum vinha partido em dois blobs (tampa e corpo separados pelo trinco), o
+que explica por que uma busca por blob único não o acharia.
+**Validação, com teste negativo de verdade.** Os 8 mapas da fase 1/4 não têm baú
+nenhum. Rodando os dois templates novos neles: **zero** detecções. Isso importa
+porque baú é quase um retângulo cheio — forma muito mais genérica que um crânio,
+e portanto muito mais propensa a casar com parede e canto de sala. Por isso o
+limiar deles é 0.88, contra 0.70 de inimigo e chefe.
+**A confirmação que não dava pra forjar.** Os dois frames da fase 2 são da mesma
+run, e entre um e outro **o jogador recolheu o baú comum**. O detector acha `bau`
+no primeiro e não acha no segundo, com o `bau_chefe` presente nos dois. Um
+detector que casasse com parede teria achado nos dois.
+**O que NÃO foi feito:** os baús não entraram na prioridade de `nav.py`. Detectar
+é medível; decidir se vale desviar a rota por um baú é escolha de jogo, e não há
+evidência nenhuma sobre isso ainda. Ficam visíveis pro planejador sem mudar
+comportamento.
+**Obstáculo e saída de fase continuam sem sprite** — não apareceram em nenhum dos
+10 mapas. O item 3 fica parcialmente fechado.
+**Sem risco pro BFS:** `_icons_on_floor` recupera pixels de ícone pela FAIXA DE
+TOM (128-146), não por template, então os baús já entravam na área andável antes
+mesmo de existir detector pra eles. Há teste afirmando isso.
+
+## ADR-086: A primeira run de verdade, e o que ela achou em 20 segundos (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** primeira execução real de `src.agent` nesta branch. Toda validação
+até aqui era sobre frame salvo e simulação. A run durou **20 segundos** e abortou
+com "três falhas seguidas", registrada em `logs/runs.jsonl`: 2 passos, 3
+destravamentos, 0 cartas jogadas.
+**Achado 1 — `UnicodeEncodeError` no relatório, a QUARTA vez.** `RunSummary.render`
+usava `"─" * 58` (box-drawing, U+2500). O console do Windows é cp1252 e a
+impressão levantou exceção **depois da run inteira ter acontecido**: o trabalho
+foi feito e o resultado se perdeu no print. Consertado, e desta vez com teste.
+
+A regra existia no CLAUDE.md desde a terceira ocorrência, e regra sem teste é
+sugestão. `tests/test_cp1252.py` percorre o AST de `src/**/*.py` e reprova
+literal de string fora do cp1252 — fazendo a distinção que importa: **docstring e
+comentário nunca são impressos** e podem usar seta à vontade; literal pode acabar
+num `logger`, num `print` ou num help de argparse. Seis literais estavam fora, em
+`agent.py` e `gamepad.py`.
+**Achado 2 — o gamepad virtual funciona, e a hipótese óbvia era falsa.** O
+personagem não se mexeu com dois `dpad_up`. Suspeitei do `boot_delay_s=0.5`,
+curto demais pro Windows enumerar um controle novo. **Medido, e refutado:** com
+processo novo a cada tentativa e `confirm` como sonda, esperas de 0.2s, 0.6s,
+1.2s e 2.5s mudaram 45-48% dos pixels — todas funcionam, inclusive a mais curta.
+Depois, no mesmo processo, `confirm` fechou um modal (71% dos pixels) e
+`dpad_left` moveu o cursor (17%). **O caminho de input está bom.**
+**Achado 3 — o jogo abre um modal bloqueante quando o controle some.** Toda vez
+que um processo do agente termina, o DS4 virtual é destruído e o jogo exibe
+"Nenhum controle detectado — Selecione OK para continuar". Ou seja: **a run
+seguinte sempre começa atrás desse modal.** Isso também invalidou um teste meu
+que rodou com o modal na frente e concluiu errado — `dpad_up` não fecha um painel
+de botão "Ok", e os 3% de mudança que eu vi eram só animação.
+**O que fica em aberto:** por que `dpad_up` não andou, partindo de um mapa limpo.
+`jogo.md:48` confirma que seta-cima é andar pra frente, e o mapeamento do código
+está certo. As hipóteses vivas são hold curto demais pra movimento (0.08s) ou o
+controle ainda não estar atribuído ao jogador no primeiro instante. Testar exige
+o jogo de volta no mapa; não dá pra concluir com o que há.
+**Achado 4 — o pavio do antitravamento é curto demais pra uma primeira run.** Do
+`_get_pad` até abortar foram 2.4s: 2 passos sem mudança, 3 botões de escalonamento,
+3 falhas de turno. Uma run que precisa fechar um modal antes de qualquer coisa não
+tem 2.4s de paciência. Não mexi no número — mexer sem medir é o erro que a
+ADR-037 registrou.
+
+## ADR-087: O BFS validava o passo a 3px, e a célula tem 19 (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** a segunda run real fez o resto do loop funcionar — dispensou um
+aviso empilhado, escolheu duas recompensas, aprendeu duas cartas — e travou no
+mesmo lugar que a primeira: **andando contra parede até o antitravamento
+abortar**. Duas runs, dois pontos diferentes, o mesmo padrão: **girar funciona,
+andar não.**
+**A medição que fechou o caso.** No frame da falha, jogador em (124,39) olhando
+sul:
+
+| distância ao sul | andável? | cinza |
+|---|---|---|
+| 8px | **sim** | 200 (piso) |
+| 16px, 24px, 32px | não | 164-169 |
+
+A faixa andável na coluna do jogador vai de y=30 a y=48 — **19px, uma célula** —
+e o jogador está no centro dela, a 9px da parede.
+**A causa raiz.** `_bfs_step` roda num grid subamostrado por `_SEARCH_STRIDE`,
+que é **3px**. `direction_to` derivava a direção do deslocamento desse passo. Um
+passo de 3px cai **dentro da célula onde o jogador já está**, que obviamente é
+piso — então a resposta "dá pra andar pra lá" era sobre um ponto que não é o
+destino. O BFS validava o movimento a **1/6 da distância real**.
+**A célula é 19px, e é constante.** Medido nos 10 mapas do `dataset/`: a moda dos
+trechos andáveis é 19px em TODOS, fases 1/4 e 2/4, mesmo com a seta do jogador
+variando entre 15 e 16px. **O zoom muda o desenho da seta, não o grid** — por
+isso `_CELL_PX` é constante e não derivada do tamanho da seta, que teria sido a
+escolha natural e errada.
+**Decisão:** `cell_ahead_walkable` verifica a célula INTEIRA na direção
+pretendida, e `direction_to` recusa qualquer direção cujo destino seja parede.
+
+Uma primeira tentativa checou só quando a resposta seria `FORWARD`. Não bastou:
+no frame da falha o BFS queria norte, que também é parede, e o resultado virou
+`atras` — girar 180° pra encarar outra parede. Validar a direção PRETENDIDA, e
+não só o ato de andar, faz o plano cair pra `esquerda`, que aponta pro leste, que
+é piso. **Girar continua livre; girar nunca bate.**
+**Invariante instalada e testada:** se o plano é ANDAR, a célula inteira à frente
+é piso. Vale nos 8 mapas da fase 1 e no frame da falha.
+**O frame da falha foi versionado** em `dataset/` — veio de `frames/`, que é
+gitignored e rotacionado durante a run, então um teste que dependesse dele
+passaria a pular em silêncio.
+**O que isso não conserta:** o BFS continua planejando a ROTA num grid de 3px.
+Recusar um passo ruim é diferente de planejar em células. Se a rota inteira
+depender de atravessar uma parede, `plan` vai devolver None e o handler anda às
+cegas. Consertar de verdade é rodar a busca em células — não foi feito porque a
+correção aqui já mata o modo de falha observado, e ampliar sem run nova mediria
+nada.
+
+## ADR-088: A travessia da mão exigia um estado que ela mesma produzia (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** com a navegação consertada (ADR-087), a terceira run passou a andar
+pelo mapa, vencer combates e subir de nível. Mas **nenhuma carta foi jogada**: em
+todo combate o log dizia "Sem carta destacada no passo 0 — fim da travessia",
+seguido de "Sem cartas legíveis na mão — finalizando turno".
+**A causa.** `scan_combat_hand` começava assim:
+
+```python
+selected = detect_card_slots(frame).selected
+for step in range(_MAX_HAND):
+    if selected is None:
+        break          # desiste no passo 0
+```
+
+No começo do turno **nenhuma carta está levantada** — o cursor fica fora do
+leque, sobre "Finalizar turno". A travessia assumia que já havia uma carta
+selecionada.
+**A medição que fecha o argumento.** Dos 13 frames de combate do `dataset/`,
+**10 (77%) não têm carta levantada**. E os 3 que têm são todos de sequência
+`card_scan`, ou seja **meio de travessia**: o estado que o código tratava como
+inicial era na verdade um estado intermediário **que ele mesmo produzia**. Nenhum
+frame de início de turno tinha cursor na mão, e ninguém tinha reparado porque o
+conjunto de referência foi colhido durante scans.
+**Decisão:** `_enter_hand` põe o cursor no leque antes de começar. Reusa
+`_tap_and_wait`, que já aperta ← e espera o cursor aparecer — não precisou de
+mecanismo novo, só da chamada que faltava. Três toques de teto, porque mão vazia
+existe e sem teto a travessia tocaria pra sempre.
+**A sentinela.** `_tap_and_wait(previous_x)` espera o cursor SAIR de `previous_x`.
+Sem cursor nenhum não há posição de onde sair, então `_NO_CURSOR = -10**6` faz
+qualquer seleção detectada contar como movimento. Resolve sem caso especial
+dentro da função que já funciona.
+**O teste que protege a premissa**, e não só o código: se a maioria dos frames de
+combate do `dataset/` passar a ter carta levantada, a premissa do `_enter_hand`
+mudou e o teste avisa. Medir a suposição vale mais que medir a implementação.
+**Por que só apareceu agora:** era preciso que a navegação funcionasse pra o
+agente chegar em combate de verdade. As duas runs anteriores abortavam antes,
+batendo na parede. Cada conserto revela o próximo.
+
+## ADR-089: A sonda de parede não usa o passo do jogador (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** a ADR-087 fixou a sonda de parede em 19px chamando isso de "lado da
+célula". A terceira run desmentiu o nome: extraindo as posições do log, os
+deslocamentos reais foram **30, 31, 30, 31px** — mediana 30. O passo do jogador é
+30px, não 19.
+**A tentação, e por que ela está errada.** O natural seria corrigir a constante
+pro passo real. Testado nos 11 mapas do `dataset/`:
+
+| sonda | resultado |
+|---|---|
+| 19px | plano em todos os 11 frames; o frame da parede dá `esquerda` |
+| **30px** | `plan=None` em 2 frames, e num mapa da fase 2 **reprova as quatro direções** |
+
+O jogador não está cercado nesse frame. Sondar no passo real cai **na faixa de
+parede que separa os pisos** — os 19px são a largura do PISO desenhado dentro de
+uma célula de ~30px, e a sonda precisa cair no piso do vizinho, não no centro
+geométrico dele.
+**Decisão:** manter 19px e **renomear pra `_PROBE_PX`**. `_CELL_PX` afirmava algo
+falso — que 19 era o lado da célula — e o próximo a ler o código "consertaria"
+pro passo medido, quebrando a navegação com a melhor das intenções.
+**O teste guarda a alternativa que falha**, não só o valor: ele força 30px e
+afirma que `plan` devolve None naquele frame. Um teste que só dissesse
+`_PROBE_PX == 19` não explicaria nada a quem quisesse mudar.
+**Onde a run 3 chegou:** 7.0 min, 57 passos, **5 cartas jogadas**, 0 jogadas
+ilegais, 1 recompensa, e terminou por **limite de iterações** — não por abortar.
+As duas anteriores morreram em 20s e 1.4 min batendo na parede.
+
+## ADR-090: O agente contava a mão no meio da animação (2026-09-01)
+**Data:** 2026-09-01
+**Contexto:** relatado que "várias vezes o modelo descartou a mão sendo que tinha
+sim muitas cartas", com a hipótese de que o print sai rápido demais e a carta
+ainda não apareceu. **A hipótese estava certa, e os frames provam.**
+**A medição.** Dos 42 frames `scan_0` da run 3 — o primeiro frame de cada
+travessia — **20 (48%) detectaram ZERO círculos**. E os zeros vêm em **rajadas**:
+2, 4, 3 e até 5 capturas seguidas antes de um frame com 6-7 cartas.
+**O frame prova.** `20260901T214903104_combat_mao_em_animacao.png`, versionado no
+`dataset/`, mostra combate com o HUD normal, HP 60/61 com o "1" de dano ainda
+flutuando, e **a mesa vazia com os versos das cartas subindo pelo rodapé**. A CV
+está certa: naquele instante não há carta na mão. O erro é de tempo.
+**Por que virava turno perdido:** sem carta detectada, `scan_combat_hand`
+devolvia mão vazia e `handle_combat` encerrava o turno. Encerrar o turno
+redistribui a mão, o que reinicia a animação — o agente perseguia o próprio
+rabo.
+**Decisão:** `_wait_for_hand` espera a mão assentar antes de contar. **Não é
+`sleep` fixo** — espera o efeito, como a travessia faz desde a ADR-041.
+**E exige a contagem REPETIR, não só aparecer:** um frame no meio da animação já
+mostra algumas cartas, então "achou carta" não é sinal de mão completa. Só um par
+de leituras iguais decide.
+**Zero nunca conta como contagem estável.** Duas leituras de zero seguidas são a
+mesa em animação, que é justamente o caso a evitar. Mão vazia existe — todas as
+cartas jogadas — e quem decide isso é o teto de 3s, nunca a repetição do zero.
+**Achado paralelo, que responde a segunda pergunta ("a contagem está correta?").**
+A contagem está boa: das 21 travessias que leram alguma carta, **16 leram 6**. O
+que é instável é a **leitura** feita pelo VLM. Nas 117 leituras da run:
+
+| carta | custos lidos |
+|---|---|
+| `Gatti Amari` | 1 (16x), **0** (1x) |
+| `Phiera Del` | 3 (6x), **0** (2x) |
+| `Magicatalisador` | None (1x), 0 (4x) |
+| `Desarmamento` | **2** (1x), **4** (1x) |
+
+**4 de 13 cartas tiveram o custo lido de mais de um jeito**, e `Pugnala` saiu com
+4 grafias diferentes. Uma leitura virou `"208 de dano"` como NOME — pedaço da
+descrição. Custo errado faz `combat.validate` aprovar jogada impossível.
+**Isso é a justificativa que faltava pra ADR-080.** Lá eu construí `read_costs`
+mas não liguei ao caminho do `CardDB`, porque havia um frame só de evidência.
+Agora há 117 leituras mostrando o modelo discordar de si mesmo sobre o custo da
+mesma carta. Não liguei ainda — é mudança no caminho de decisão do combate e
+merece a sua própria run pra medir — mas o argumento deixou de ser teórico.
