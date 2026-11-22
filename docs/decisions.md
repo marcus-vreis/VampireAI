@@ -1688,3 +1688,147 @@ nos detectores de CV.
 **Decisão:** mockar `agent.RUNS_LOG` nas fixtures autouse de `test_loop.py` e
 `test_run_summary.py`, limpar as entradas sintéticas de `logs/runs.jsonl` e fazer
 `label.summary()` recalcular `_observed` quando o PNG existe em `dataset/`.
+
+## ADR-096: `seek_card` lê a carta com o modelo quando o cache erra, e segue quando a carta é nova (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** na run ao vivo de 2026-11-22, 14 de 22 posicionamentos de cursor
+falharam (64%). Refazendo offline os frames `_seek`: o cache reconhecia a carta,
+mas na hora da falha a entrada mais próxima estava a 88 bits (limiar 60). O mesmo
+sprite deriva até ~113 bits entre turnos (Magicatalisador tem entradas a 30, 70 e
+102 bits). Cada erro de cache abortava a jogada, refazia a travessia e pedia nova
+decisão ao modelo. O outro caso: carta comprada depois da jogada não está na mão
+conhecida, e `seek_card` desistia em vez de continuar.
+**Decisão:** `_identify` usa `read_card` (cache e, se errar, VLM que ensina o
+cache). Carta fora da mão conhecida faz a busca seguir na mesma direção,
+invertendo ao bater na ponta do leque. Além disso, a travessia grava o dHash de
+cada carta em `HandScan.hashes`, e a busca localiza o cursor primeiro pelo hash
+**dentro desta mão** (corte `_HAND_HASH_BITS = 80`), e só depois pelo nome. O nome
+transcrito variou entre "Otto, o PS", "Otto, o Pardal" e "462 de dano." na mesma
+run. Medido em 22 leituras pareadas pelo log: cartas diferentes da mesma travessia
+ficam em 90-150 bits (n=46); o mesmo nome entre turnos, em 21-113 (9 de 14 abaixo
+de 80). **Amostra pequena**: por isso o nome continua como segunda via.
+**Resultado medido:** runs de 40 passos, 8 cartas jogadas e 64% de falha antes;
+11 cartas e 39% depois do primeiro passo (leitura pelo modelo + seguir). O efeito
+do hash na mão ainda **não foi medido ao vivo**: as runs seguintes ficaram no mapa.
+**Alternativa descartada:** baixar o limiar global do `CardDB`. Cartas diferentes
+chegam a 90 bits; o global não tem folga, só a comparação restrita à mão tem.
+
+## ADR-097: Direção da seta pela assimetria (3º momento), não pelo centro do bbox (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** o agente passou 40 passos dando meia-volta na mesma célula. A
+meia-volta funcionava, mas a seta para cima era lida como LESTE: errada em todos
+os 52 frames de 133 em que aparecia. A seta tem um entalhe na base, então o
+centroide fica a ~0.7px do centro do bbox, e o bbox de 15px para uma seta de 14
+soma um viés fixo de ~0.73px em x.
+**Decisão:** `_facing_from_mass` usa `nu30`/`nu03` de `cv2.moments`, relativos ao
+centroide e imunes ao bbox. Em 133 frames, o eixo transversal fica em no máximo
+23% do principal. Nos 81 frames em que o método antigo acertava, os dois
+concordam, inclusive nos de referência dos testes. Frames de regressão
+versionados em `dataset/referencia/` (seta norte e sul sobre a mesma célula).
+
+## ADR-098: A célula do jogador é piso, mesmo com um sprite por baixo da seta (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** com a direção corrigida (ADR-097), o agente continuou girando: o
+alvo mudava a cada giro. A caixa escura de ±11px em volta da seta, fora do piso,
+isolava o jogador. (Ela foi tomada por baú; é a saída do andar, ver ADR-100.) O BFS não alcançava nenhum dos 4 inimigos, e
+o único alvo restante era "fronteira" a 3px, dentro da própria célula, cuja
+direção saía do arredondamento.
+**Decisão:** `read_minimap` marca como piso um quadrado de ±12px
+(`_PLAYER_CELL_HALF`) em volta do centro da seta. Isso invade no máximo 2.5px da
+faixa de parede de 11px (piso de 19px, passo de 30px, ADR-087), sem abrir
+passagem através de parede. Os testes de parede da ADR-087 continuam verdes.
+**Depois:** o plano passou a mirar a caveira vizinha, mas andar não saía da
+célula. Era a saída do andar, resolvida na ADR-100.
+
+## ADR-099: Tela escura com o jogo confirmado na frente não aborta a run (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** a primeira run ao vivo de 2026-11-22 abortou no passo 0: o jogo
+abre num alerta de fotossensibilidade quase todo preto (brilho 12.8), e a CV o
+classifica como `not_game`. `_require_focus` já tinha perguntado ao sistema
+(Win32) e confirmado o jogo na frente: é a mesma armadilha circular da ADR-084,
+um guarda que depende da CV reconhecer a tela.
+**Decisão:** `_perceive_own_screen` devolve None para `NotTheGameError` quando o
+foco foi confirmado pelo sistema. O passo não age, e o `StallDetector` aperta X
+quando a tela não muda, o que avança o alerta de boot. No replay (`dry_run`), sem
+sistema para confirmar, o erro continua abortando.
+
+## ADR-100: Na saída do andar, virar para o lado sem piso e andar (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** o agente ficou preso numa célula com um quadrado escuro em volta da
+seta. Andar para norte ou sul tocava um rastro vermelho e não saía do lugar,
+mesmo com caveira viva ao lado. Confirmado pelo usuário: é a **saída do andar**,
+e para sair é preciso virar para o lado certo e andar para frente.
+**Decisão:** `read_minimap` marca `on_exit` quando a fração de pixels escuros
+(cinza < 80) no anel de ±11px fora da seta passa de 0.15. Medido: 0.00 em 20
+frames de célula comum, 0.33 em 243 frames de saída, 0.56 na image-17 do
+`jogo.md`. `exit_direction` devolve o único lado sem piso vizinho (sonda de 19px,
+ADR-087), e `plan` põe a saída como primeiro degrau.
+**Validação:** três saídas independentes, todas corretas. Hoje: piso a N/S/O,
+saída a leste (confirmada pelo usuário). image-17: piso a N/S/L, saída a oeste
+("basta ir para frente"). Frame de setembro `193755377`: baú dourado pós-chefe à
+frente, saída ao sul.
+**Alternativa descartada:** saída como o lado sem moldura escura. Nos três casos
+esse lado é o leste, e só no de hoje ele é a saída.
+**Em aberto:** com dois ou mais lados sem piso, `exit_direction` devolve None e o
+plano segue o normal. Ainda não apareceu nenhum caso assim. O agente também não
+**procura** a saída: ela só é tratada quando ele já está em cima.
+
+## ADR-101: HUD sem placas de turno e sem mão é diálogo, não combate (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** run ao vivo: 14 "recompensas" num laço. A tela "Inserir joia em uma
+carta" com UMA carta elegível não tem o botão vermelho do baú nem um par de
+cartas; sobrava só o HUD, e HUD sozinho dava `combat`. O agente apertava
+"finalizar turno" em vez de X, a joia não entrava, e o baú voltava.
+**Decisão:** `combat` exige placas de turno ou 2+ cartas. HUD sem nenhum dos dois
+vai para `dialog`, que o VLM desambigua (`detect_dialog`, com saída `notice`).
+Medido nos 40 frames rotulados: 4 erros de veredito antes, 3 depois (o de hoje
+corrigido, nenhum novo). Placas presentes em 12 de 13 combates rotulados; o 13º
+já saía como mapa antes desta mudança.
+
+## ADR-102: Direção pelo ponto em que o caminho sai da célula, não pelo 1º passo do BFS (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** no andar 2/4, 70 passos indo e voltando entre duas células. O 1º
+passo do BFS tem 3px (stride do grid) e cai dentro da célula do jogador. O
+caminho até a caveira vizinha (a oeste) começava 3px ao norte: virava "norte", a
+sonda reprovava, e o plano caía num alvo mais distante, cujo 1º passo apontava
+pro sul. Da célula ao sul, o mesmo alvo começava pelo norte.
+**Decisão:** `_bfs_step` devolve o primeiro ponto do caminho a ≥19px do jogador
+(a sonda da ADR-087): onde o caminho SAI da célula.
+**Teste alterado:** `test_nao_manda_mais_andar_contra_a_parede` esperava LEFT
+(leste). Era efeito do bug: o caminho até o inimigo (94,69) sai pelo OESTE, em
+(105,48). A regressão que ele guarda (não andar contra a parede ao sul) segue.
+**Resultado ao vivo:** o agente atravessou o andar 2 de (216,24) até (63,146) sem
+vaivém, entrando em combates e level ups.
+
+## ADR-103: Saída sem lado único: seguir em frente (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** regra do jogo, confirmada pelo usuário: ao matar o chefe, a célula
+dele vira a saída do andar, e basta andar para frente. Essa célula pode ficar no
+meio da sala, com piso em mais de um lado, e aí `exit_direction` (ADR-100) devolve
+None e o plano caía no fluxo normal.
+**Decisão:** sobre a saída, sem lado único sem piso, o plano é seguir na direção
+atual. Testado com a saída real de 2026-11-22, simulando piso a leste.
+**Em aberto:** na run ao vivo o agente não conseguiu ENTRAR na célula do chefe no
+andar 2/4: andar para o norte esbarra num portão de grade. Havia 2 inimigos
+comuns vivos, um deles atrás do chefe. Falta o experimento com o jogo em
+primeiro plano.
+
+## ADR-104: Cercas invisíveis são aprendidas batendo (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** o jogo tem cercas em algumas paredes que o minimapa não desenha: o
+piso parece contínuo e andar bate nelas. No andar 2/4 o agente ficou batendo
+numa cerca entre ele e o chefe. Rota demonstrada pelo usuário: leste, norte,
+oeste. Não há como ler a cerca no minimapa.
+**Decisão:** se o agente anda para frente e o próximo frame de mapa mostra a mesma
+célula (±6px) com a mesma direção, a aresta (célula, direção) vira cerca.
+`with_fences` desenha a cerca como faixa fora do piso na borda da célula
+(±16px), `cell_ahead_walkable` recusa a aresta cercada, e `direction_to` tenta os
+eixos do caminho em ordem de magnitude. Contornando a ponta da cerca o BFS sai
+da célula na diagonal, (+18, -20), e só o eixo dominante (o cercado) não servia.
+Cercas são esquecidas ao pisar para fora pela saída do andar. Uma transição de
+estado no meio (combate) anula o passo pendente.
+**Validação:** teste com o frame real da cerca: o plano vira à direita (leste),
+como na rota do usuário. **Não exercitado ao vivo**: na run seguinte o usuário já
+tinha contornado a cerca manualmente.
+**Efeito colateral aceito:** andar contra um ponto de bônus que não move o
+personagem também vira cerca. O agente não mira bônus, e a cerca vale só no andar.

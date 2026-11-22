@@ -300,6 +300,49 @@ frames rotulados de `dataset/labels.jsonl`:
 **Testes:** 325 passando.
 
 
+### Sessão 2026-11-22 — primeiras runs ao vivo depois da formatação (ADR-096 a ADR-099)
+
+Seis runs contra o jogo aberto, cada correção validada na run seguinte:
+
+- **Boot (`src/agent.py`, ADR-099):** a run abortava no passo 0 no alerta de
+  fotossensibilidade (brilho 12.8, `not_game`). Com o foco confirmado pelo
+  sistema, a tela escura agora fica para o antitravamento, que aperta X.
+- **Posicionamento do cursor (`src/perception.py`, ADR-096):** 14 de 22 jogadas
+  falhavam em `seek_card`. O cache errava o mesmo sprite (até 113 bits entre
+  turnos), e carta comprada depois da jogada abortava a busca. Agora o modelo lê
+  e ensina o cache, a busca segue quando a carta é nova, e o cursor é localizado
+  pelo hash **desta mão** (`HandScan.hashes`) antes do nome.
+  Run de 40 passos: 8 → 11 cartas, falha 64% → 39% (antes do hash na mão).
+- **Direção da seta (`src/vision/minimap.py`, ADR-097):** a seta para cima era
+  lida como leste em 52 de 52 frames. Agora usa o 3º momento central.
+- **Célula do jogador (`src/vision/minimap.py`, ADR-098):** a caixa escura em
+  volta da seta isolava o jogador no BFS.
+- **Saída do andar (`src/vision/minimap.py`, `src/nav.py`, ADR-100):** a caixa
+  escura é a saída. Agora o agente a detecta, vira para o único lado sem piso e
+  anda. Validada em 3 saídas (frames) e **ao vivo**: andar 1/4 → 2/4.
+- **Laço de baú (`src/vision/screen.py`, ADR-101):** "Inserir joia" com uma carta
+  só passava por combate. HUD sem placas de turno nem mão agora é diálogo.
+- **Vaivém no mapa (`src/vision/minimap.py`, ADR-102):** a direção vinha do 1º
+  passo de 3px do BFS. Agora vem de onde o caminho sai da célula. Ao vivo, o andar
+  2 foi atravessado de ponta a ponta.
+
+**Aberto:** em (63,146), no andar 2/4, o chefe está na célula ao norte e o plano
+mira um inimigo comum ATRÁS dele, passando pela célula do chefe. Andar para lá
+esbarra num portão de grade. Mecânica a confirmar.
+- **Saída do chefe (`src/nav.py`, ADR-103):** sobre a saída sem lado único sem
+  piso, segue em frente. Validado ao vivo: chefe do andar 2 morto, andar 3.
+- **Cercas invisíveis (`src/agent.py`, `src/vision/minimap.py`, ADR-104):** andar
+  sem sair da célula grava uma cerca, e o BFS contorna. Testado com frame real;
+  ainda não exercitado ao vivo.
+
+**Melhor run do dia (80 passos):** andar 2 → chefe → andar 3, 9 cartas jogadas,
+5 falhas de posicionamento em 14. Pendências vistas: "custo desconhecido" ainda
+encerra turno (13% das leituras, ver ADR-056), 3 jogadas ilegais, e algumas telas
+classificadas como `shop` no meio do combate (não investigado).
+
+**Testes:** 350 passando.
+
+
 ## Próximo
 
 ### Depende de você jogar
