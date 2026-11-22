@@ -12,13 +12,14 @@ from src.states import GameNotFocusedError, GameState, NotTheGameError
 
 
 @pytest.fixture(autouse=True)
-def sem_espera():
+def sem_espera(tmp_path):
     """Zera os sleeps: o loop dorme entre passos e ao esperar foco."""
     with (
         mock.patch.object(agent.time, "sleep"),
         mock.patch.object(agent, "gamepad") as pad,
         mock.patch.object(agent, "preflight", return_value=True),
         mock.patch.object(agent, "default_memory") as mem,
+        mock.patch.object(agent, "RUNS_LOG", tmp_path / "runs.jsonl"),
     ):
         mem.return_value = mock.MagicMock()
         yield pad
@@ -82,8 +83,6 @@ def test_perder_o_foco_espera_em_vez_de_abortar():
 
 
 def test_foco_perdido_pra_sempre_acaba_desistindo():
-    codigo, passo = rodar(
-        [GameNotFocusedError("sem foco")] * 50, iters=agent._MAX_FOCUS_WAITS + 5
-    )
+    codigo, passo = rodar([GameNotFocusedError("sem foco")] * 50, iters=agent._MAX_FOCUS_WAITS + 5)
     assert codigo == 2
     assert passo.call_count == agent._MAX_FOCUS_WAITS

@@ -147,3 +147,23 @@ def test_a_ultima_levantada_e_ambigua_e_nao_finge_que_sabe():
     assert slots.selected_idx == slots.visible_total - 1, "levantada na ponta direita"
     assert slots.hidden_idx is None
     assert slots.hand_size == 5, "piso, nao a verdade (que e 6)"
+
+
+@pytest.mark.parametrize(
+    ("nome", "esperado"),
+    [
+        ("20260901T193818051_label_boss_chest.png", Verdict.DIALOG),
+        ("20260901T193850481_label_boss_chest.png", Verdict.DIALOG),
+        ("20260901T193953998_label_chest.png", Verdict.DIALOG),
+        ("20260901T194641823_label_chest_card_target.png", Verdict.DIALOG),
+        ("20260901T194702922_label_chest_card_target.png", Verdict.DIALOG),
+        ("20260901T194945633_label_game_over.png", Verdict.UNKNOWN),
+    ],
+)
+def test_telas_com_hud_sem_botoes_de_combate_nao_passam_por_combate(nome: str, esperado: Verdict):
+    """Baú, alvo de joia e game over mantêm coração e orbe visíveis, mas não têm
+    as placas bege 'Jogar todas'/'Finalizar turno'."""
+    caminho = _RAIZ / "dataset" / nome
+    if not caminho.is_file():
+        pytest.skip(f"frame ausente: {nome}")
+    assert signature(cv2.imread(str(caminho))).verdict is esperado

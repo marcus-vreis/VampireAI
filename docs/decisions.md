@@ -1587,3 +1587,104 @@ mas não liguei ao caminho do `CardDB`, porque havia um frame só de evidência.
 Agora há 117 leituras mostrando o modelo discordar de si mesmo sobre o custo da
 mesma carta. Não liguei ainda — é mudança no caminho de decisão do combate e
 merece a sua própria run pra medir — mas o argumento deixou de ser teórico.
+
+## ADR-091: Escala fixa centrada em `card_bbox` e resiliência em `seek_card` (2026-10-19)
+**Data:** 2026-10-19
+**Contexto:** na run 4 (25 passos de combate), o agente jogou apenas 2 cartas e
+falhou **22 vezes** com `"combate: cursor não chegou em <Carta>"`. Ao mesmo tempo,
+`notes/cards.json` acumulou **89 entradas para ~15 cartas distintas** (`"Alho"`
+14x, `"Gatti Amari"` 7x, `"Tomo Leve"` 6x + `"Torno Leve"` 2x, `"Pummarola"` 5x +
+`"Punmarola"` + `"Pumarola"`).
+**Causas medidas:**
+1. **`card_bbox(circle)` escalava pelo `side` instantâneo do pulso (29–40px):**
+   a carta destacada na mão mantém tamanho fixo na tela, mas seu círculo de custo
+   pulsa entre 29px e 40px. Multiplicar `circle.side` por `7.4 x 9.2` variava o
+   recorte em até 82px; medido em `20260802T154032207_card_scan_1.png`, **1px de
+   pulso (30→31px) já deslocava o dHash em 63 bits** (acima de `_MAX_DISTANCE=60`),
+   e 30→36px deslocava em **135 bits**.
+2. **`seek_card` desistia se o cursor caísse fora da mão (`selected is None`),**
+   exigia igualdade exata de string (`"Tomo Leve"` != `"Torno Leve"`) e usava a
+   primeira ocorrência do nome na mão ao calcular a direção (`left = here > target`),
+   andando pro lado errado quando havia duas cópias da mesma carta nas pontas.
+**Decisão:**
+- Fixar a escala de `card_bbox` quando `side=None` em `_SELECTED_CARD_SIDE = 33`
+  (`circle.side >= 28`) ou `_NORMAL_CARD_SIDE = 24`, ancorada no centro do círculo
+  (`dist = 0` em toda a faixa de pulso 29–40px).
+- Em `seek_card`: chamar `_enter_hand` quando `selected is None` e houver cartas
+  visíveis; aceitar similaridade de nome `>= 0.80` (`_NAME_MATCH_RATIO`); e
+  desempatar cartas repetidas pela posição relativa do cursor no leque.
+
+## ADR-092: Placas de turno e botão de baú separam combate, baú e game over (2026-10-19)
+**Data:** 2026-10-19
+**Contexto:** nos 39 frames rotulados de `dataset/labels.jsonl`, `boss_chest`
+(2/2), `chest` (1/1), `chest_card_target` (2/2) e `game_over` (1/1) tinham 0% de
+concordância na classificação de tela — todos saíam como `Verdict.COMBAT`. A
+premissa de `screen._verdict` era que `hud=True` sem minimapa nem painel slate só
+podia ser combate. Mas baú, alvo de joia e game over mantêm o coração e o orbe
+visíveis e não têm painel slate (`slate <= 0.017`).
+**Medição nos 59 frames (`dataset/` + `dataset/referencia/`):**
+- As placas bege `"Jogar todas"` `(165, 590, 245, 630)` e `"Finalizar turno"`
+  `(1032, 590, 1114, 630)` têm fração de pixels claros (`gray > 110`) entre
+  **0.734 e 0.997** em 100% dos frames de combate (inclusive com mão vazia em
+  animação) e **0.000** em mapa, baú, alvo de joia, game over e baralho. Corte em
+  `_TURN_BUTTON_PRESENT = 0.50`.
+- O botão vermelho inferior (`"Sair"`/`"Sacar"`, `(470, 612, 808, 658)`) tem
+  fração vermelha **0.801** nas 5 telas de baú/joia contra no máximo **0.195** em
+  qualquer outra tela. Corte em `_CHEST_BUTTON_PRESENT = 0.50`.
+**Decisão:** exigir `_turn_buttons_present` (ou `cards >= 2`) para `Verdict.COMBAT`
+e rotear `_chest_button_present and hud` para `Verdict.DIALOG`. `chest`,
+`boss_chest` e `chest_card_target` passam a 100% `DIALOG`, e `game_over` passa a
+100% `UNKNOWN` (`detect_other.txt`).
+
+## ADR-093: Detecção da 4ª carta de bônus, joias de baú e entrada do cursor em escolhas (2026-10-19)
+**Data:** 2026-10-19
+**Contexto:** três falhas nas telas de escolha (`level_up`, `chest`, `boss_chest`,
+`chest_card_target`):
+1. No level up de 4 opções (`20260901T194156095_label_level_up.png`), a 4ª carta
+   (`"Dobro de dano"`) traz um orbe laranja `x2` em vez de círculo azul, então
+   `detect_choice_slots` contava 3 cartas e perdia justamente a carta selecionada
+   (índice 3).
+2. Nas telas de joia do baú, as 3 cartas têm fundo holográfico claro e não têm
+   círculo azul de custo (exceto um ícone de varinha que gerava 1 falso positivo em
+   `194641823`).
+3. Quando a tela de escolha abre com o destaque em `"Adiar"` ou `"Rolar Nov."` à
+   direita (`indice_selecionada=None`), `_choose_and_confirm` retornava sem emitir
+   input, travando o loop até o `StallDetector` apertar X sobre `"Adiar"`.
+**Medição e decisão:**
+- Em `detect_choice_slots`: quando há 3 círculos deslocados à esquerda
+  (`circles[2].x < 680`, medido `659` contra `725–758` nas ofertas de 3 cartas) e
+  há borda clara em `x=895..965, y=170..260`, sintetizar a 4ª âncora em
+  `2*x2 - x1` com o topo medido na tira (`y=195` levantada, `y=231` normal).
+- Quando há `< 3` círculos azuis mas as 3 colunas `_GEM_COLS` têm brilho médio
+  `>= 90.0` em `y=215..325` (medido `94.8–184.1` nas 5 telas de baú contra
+  `<= 84.7` fora de escolha), sintetizar as 3 âncoras em `x=(399, 572, 745)` com
+  topo medido em `y=150..210` (`157–158` levantada vs `179` normal).
+- Em `_choose_and_confirm`: quando `cur is None`, chamar
+  `input_exec.navigate_horizontal(-1)` para trazer o cursor de `"Adiar"`/`"Rolar Nov."`
+  para as cartas sem confirmar no escuro.
+
+## ADR-094: Limiar de distância de glifos reduzido de 72 para 46 bits (2026-10-19)
+**Data:** 2026-10-19
+**Contexto:** a ADR-039 fixou `_MAX_GLYPH_DISTANCE = 72` com base apenas nos
+dígitos `6` e `1` do coração (`dist = 92`). Medindo todos os dígitos rotulados de
+`dataset/labels.jsonl` (`0, 1, 2, 3, 4, 5, 6, 7`), dígitos distintos ficam a
+**49–50 bits** (`6` vs `3` = 49, `6` vs `5` = 49, `2` vs `3` = 50, `3` vs `5` = 50).
+Com limiar 72, assim que o `6` do coração ou o `2` do orbe entravam no `GlyphBook`,
+qualquer `3` no orbe casava por vizinhança com `6` ou `2` — devolvendo mana errada
+e impedindo `read_mana_hybrid` de consultar o VLM para aprender o `3`.
+**Medição:** a maior distância ao vizinho mais próximo do **mesmo** dígito entre
+HUD normal e HUD escurecido é **45 bits** (`test_digits.py`); a menor distância
+entre dígitos **diferentes** é **49 bits**.
+**Decisão:** fixar `_MAX_GLYPH_DISTANCE = 46`.
+
+## ADR-095: Isolamento de `RUNS_LOG` nos testes e recálculo ao vivo em `label --summary` (2026-10-19)
+**Data:** 2026-10-19
+**Contexto:** `tests/test_loop.py` e `tests/test_run_summary.py` chamavam
+`agent.loop()` sem mockar `agent.RUNS_LOG`, gravando 12 runs falsas em
+`logs/runs.jsonl` a cada execução do `pytest` (mais de 500 linhas acumuladas).
+Além disso, `python -m src.label --summary` lia os campos `cv_*` congelados no
+momento da captura em `dataset/labels.jsonl`, sem refletir melhorias posteriores
+nos detectores de CV.
+**Decisão:** mockar `agent.RUNS_LOG` nas fixtures autouse de `test_loop.py` e
+`test_run_summary.py`, limpar as entradas sintéticas de `logs/runs.jsonl` e fazer
+`label.summary()` recalcular `_observed` quando o PNG existe em `dataset/`.

@@ -58,3 +58,24 @@ def test_recorte_do_bonus_nao_infla_com_o_orbe():
     lado = int(median(c.side for c in slots.circles))
     larguras = [card_bbox(c, lado)[2] for c in slots.circles]
     assert max(larguras) - min(larguras) <= 1, "todas as cartas recortadas na mesma escala"
+
+
+@pytest.mark.parametrize(
+    ("nome", "total", "selecionada"),
+    [
+        ("20260901T194156095_label_level_up.png", 4, 3),
+        ("20260901T193818051_label_boss_chest.png", 3, None),
+        ("20260901T193953998_label_chest.png", 3, 1),
+        ("20260901T194641823_label_chest_card_target.png", 3, None),
+        ("20260901T194702922_label_chest_card_target.png", 3, 0),
+    ],
+)
+def test_completa_quarta_carta_e_joias_do_bau(nome: str, total: int, selecionada: int | None):
+    """Cartas de bônus com orbe laranja ('Dobro de dano') e joias de baú não têm
+    círculo azul de custo, mas precisam entrar na contagem e no cursor."""
+    caminho = _RAIZ / "dataset" / nome
+    if not caminho.is_file():
+        pytest.skip(f"frame ausente: {nome}")
+    slots = detect_choice_slots(cv2.imread(str(caminho)))
+    assert slots.visible_total == total
+    assert slots.selected_idx == selecionada

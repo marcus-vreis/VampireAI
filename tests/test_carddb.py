@@ -58,7 +58,10 @@ def test_tolera_deslocamento_do_recorte(db):
     img = cv2.imread(str(frame))
     slots = detect_card_slots(img)
     x, y, w, h = card_bbox(slots.selected)
-    db.remember(img[y : y + h, x : x + w], CardRecord(nome="Gatti Amari", mana=1, descricao=None, tipo="ataque"))
+    db.remember(
+        img[y : y + h, x : x + w],
+        CardRecord(nome="Gatti Amari", mana=1, descricao=None, tipo="ataque"),
+    )
     deslocado = img[y + 2 : y + h + 2, x + 1 : x + w + 1]
     hit = db.lookup(deslocado)
     assert hit is not None and hit.nome == "Gatti Amari"
@@ -71,8 +74,10 @@ def test_carta_diferente_do_mesmo_frame_nao_colide(db):
     img = cv2.imread(str(frame))
     circles = detect_card_slots(img).circles
     a, b = card_bbox(circles[0]), card_bbox(circles[-1])
-    db.remember(img[a[1] : a[1] + a[3], a[0] : a[0] + a[2]],
-                CardRecord(nome="primeira", mana=0, descricao=None, tipo="tomo"))
+    db.remember(
+        img[a[1] : a[1] + a[3], a[0] : a[0] + a[2]],
+        CardRecord(nome="primeira", mana=0, descricao=None, tipo="tomo"),
+    )
     assert db.lookup(img[b[1] : b[1] + b[3], b[0] : b[0] + b[2]]) is None
 
 
@@ -88,3 +93,28 @@ def test_persiste_entre_instancias(tmp_path):
 def test_hash_e_estavel():
     card = art(7)
     assert perceptual_hash(card) == perceptual_hash(card.copy())
+
+
+def test_pulso_do_circulo_nao_desloca_o_hash(db):
+    """O círculo da carta selecionada pulsa de 29 a 40px enquanto a carta fica parada.
+
+    Escalar `card_bbox` pelo lado instantâneo mudava o recorte em até 82px e fazia
+    a mesma carta acumular dezenas de entradas no cache.
+    """
+    from src.vision.cards import CostCircle
+
+    frame = FRAMES / "20260802T154032207_card_scan_1.png"
+    if not frame.is_file():
+        pytest.skip("frame de referência ausente")
+    img = cv2.imread(str(frame))
+    c = detect_card_slots(img).selected
+    cx, cy = c.x + c.w // 2, c.y + c.h // 2
+    x0, y0, w0, h0 = card_bbox(CostCircle(cx - 15, cy - 15, 30, 30))
+    db.remember(
+        img[y0 : y0 + h0, x0 : x0 + w0],
+        CardRecord(nome="Gatti Amari", mana=1, descricao=None, tipo="ataque"),
+    )
+    for side in (29, 34, 40):
+        x, y, w, h = card_bbox(CostCircle(cx - side // 2, cy - side // 2, side, side))
+        hit = db.lookup(img[y : y + h, x : x + w])
+        assert hit is not None and hit.nome == "Gatti Amari"

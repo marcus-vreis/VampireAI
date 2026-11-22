@@ -11,10 +11,11 @@ from src.states import GameState, NotTheGameError
 
 
 @pytest.fixture(autouse=True)
-def resumo_limpo():
+def resumo_limpo(tmp_path):
     anterior = agent._RUN
     agent._RUN = agent.RunSummary()
-    yield agent._RUN
+    with mock.patch.object(agent, "RUNS_LOG", tmp_path / "runs.jsonl"):
+        yield agent._RUN
     agent._RUN = anterior
 
 

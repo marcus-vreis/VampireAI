@@ -30,6 +30,10 @@ _MINIMAP_BOX = (705, 512, 1010, 720)
 _CENTER_BOX = (260, 120, 1030, 580)
 _HEART_BOX = (150, 455, 265, 570)
 _ORB_BOX = (1015, 455, 1145, 585)
+_PLAY_ALL_BOX = (165, 590, 245, 630)
+_END_TURN_BOX = (1032, 590, 1114, 630)
+_CHEST_BUTTON_BOX = (470, 612, 808, 658)
+_GAME_OVER_BUTTON_BOX = (565, 495, 715, 550)
 
 # Limiares. As margens são largas: pergaminho do minimapa fica em 0.62-0.76 no
 # mapa e no máximo 0.32 em combate; o painel slate de diálogo, 0.56-0.63 contra
@@ -44,6 +48,18 @@ _SLATE_DIALOG = 0.45
 # estar presente. Ver ADR-049.
 _SLATE_DECK = 0.10
 _HUD_PRESENT = 0.02
+# Botões bege "Jogar todas" e "Finalizar turno": presentes em 100% dos frames de
+# combate (0.734-0.997, inclusive com mão vazia entre turnos) e ausentes (0.000)
+# em mapa, baú, game over e baralho.
+_TURN_BUTTON_BRIGHT = 110
+_TURN_BUTTON_PRESENT = 0.50
+# Telas de baú (chest, boss_chest, chest_card_target) não têm painel slate
+# (0.015-0.017), mas exibem o botão vermelho inferior ("Sair"/"Sacar") em 0.801
+# contra no máximo 0.195 em qualquer outra tela do dataset.
+_CHEST_BUTTON_PRESENT = 0.50
+# Tela de Game Over mantém o HUD visível mas exibe o botão azul "Pronto" no
+# centro inferior (0.601 contra <= 0.05 em combate/mapa).
+_GAME_OVER_BUTTON_PRESENT = 0.40
 
 
 class Verdict(str, Enum):
@@ -96,12 +112,41 @@ def _hud_present(frame: np.ndarray) -> bool:
     return float((red > 0).mean()) > _HUD_PRESENT and float((blue > 0).mean()) > _HUD_PRESENT
 
 
+def _turn_buttons_present(frame: np.ndarray) -> bool:
+    """Placas bege 'Jogar todas' e 'Finalizar turno' visíveis no HUD de combate."""
+    left = cv2.cvtColor(_box(frame, _PLAY_ALL_BOX), cv2.COLOR_BGR2GRAY)
+    right = cv2.cvtColor(_box(frame, _END_TURN_BOX), cv2.COLOR_BGR2GRAY)
+    ratio = min(
+        float((left > _TURN_BUTTON_BRIGHT).mean()), float((right > _TURN_BUTTON_BRIGHT).mean())
+    )
+    return ratio >= _TURN_BUTTON_PRESENT
+
+
+def _chest_button_present(frame: np.ndarray) -> bool:
+    """Botão vermelho inferior ('Sair'/'Sacar') das telas de baú e alvo de joia."""
+    hsv = cv2.cvtColor(_box(frame, _CHEST_BUTTON_BOX), cv2.COLOR_BGR2HSV)
+    red = cv2.inRange(hsv, np.array([0, 120, 80]), np.array([12, 255, 255])) | cv2.inRange(
+        hsv, np.array([170, 120, 80]), np.array([180, 255, 255])
+    )
+    return float((red > 0).mean()) >= _CHEST_BUTTON_PRESENT
+
+
+def _game_over_button_present(frame: np.ndarray) -> bool:
+    """Botão azul 'Pronto' centralizado abaixo do banner de Game Over."""
+    hsv = cv2.cvtColor(_box(frame, _GAME_OVER_BUTTON_BOX), cv2.COLOR_BGR2HSV)
+    blue = cv2.inRange(hsv, np.array([105, 130, 120]), np.array([128, 255, 255]))
+    return float((blue > 0).mean()) >= _GAME_OVER_BUTTON_PRESENT
+
+
 def signature(frame: np.ndarray) -> ScreenSignature:
     """Mede a tela e emite um veredito. Não faz nenhuma chamada de modelo."""
     parchment = _parchment_ratio(frame)
     slate = _slate_ratio(frame)
     cards = detect_card_slots(frame).visible_total
     hud = _hud_present(frame)
+    turn_buttons = _turn_buttons_present(frame)
+    chest_button = _chest_button_present(frame)
+    game_over_button = _game_over_button_present(frame)
     brightness = float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean())
 
     return ScreenSignature(
@@ -110,12 +155,22 @@ def signature(frame: np.ndarray) -> ScreenSignature:
         cards=cards,
         hud=hud,
         brightness=round(brightness, 1),
-        verdict=_verdict(parchment, slate, cards, hud),
+        verdict=_verdict(
+            parchment, slate, cards, hud, turn_buttons, chest_button, game_over_button
+        ),
     )
 
 
-def _verdict(parchment: float, slate: float, cards: int, hud: bool) -> Verdict:
-    if slate >= _SLATE_DIALOG:
+def _verdict(
+    parchment: float,
+    slate: float,
+    cards: int,
+    hud: bool,
+    turn_buttons: bool = False,
+    chest_button: bool = False,
+    game_over_button: bool = False,
+) -> Verdict:
+    if slate >= _SLATE_DIALOG or (chest_button and hud):
         return Verdict.DIALOG
     if slate >= _SLATE_DECK and hud:
         # As cartas do deck também têm círculo de custo, então sem esta checagem
@@ -125,11 +180,7 @@ def _verdict(parchment: float, slate: float, cards: int, hud: bool) -> Verdict:
         return Verdict.DECK
     if parchment >= _PARCHMENT_MAP:
         return Verdict.MAP
-    if cards >= 1:
-        return Verdict.COMBAT
-    if hud:
-        # Mão vazia entre turnos: a run está em curso e o minimapa está coberto,
-        # então só sobra combate.
+    if (hud and not game_over_button) or turn_buttons or cards >= 2:
         return Verdict.COMBAT
     if not hud and parchment < 0.1 and slate < 0.1:
         return Verdict.NOT_GAME

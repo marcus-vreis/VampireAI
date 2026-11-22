@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 from statistics import median
 
@@ -39,6 +40,7 @@ from src.vision.cards import (
 )
 from src.vision.digits import GlyphBook
 from src.vision.hud import HEART_BOX, ORB_BOX, heart_rows, orb_glyphs, read_hp, read_mana
+from src.vision.screen import Verdict, signature
 from src.window import warn_if_unfocused
 
 # Duas leituras do cursor a menos de 12px são a mesma carta.
@@ -59,6 +61,7 @@ class HandScan(BaseModel):
     cursor_idx: int
     mana: int | None = None
     hp: tuple[int, int] | None = None  # (atual, máximo)
+    in_combat: bool = True
 
     @property
     def total(self) -> int:
@@ -97,8 +100,9 @@ def _worth_caching(card: CardScanFrame) -> bool:
     Custo ilegível congelado em cache é pior que chamada repetida: `combat.validate`
     não consegue checar se a carta cabe na mana quando `mana` é None, então uma
     leitura ruim vira jogada ilegal em todo turno seguinte em que a carta aparece.
+    Cartas de bônus/joia não têm custo de mana e podem ser guardadas sem ele.
     """
-    return bool(card.nome) and card.mana is not None
+    return bool(card.nome) and (card.mana is not None or card.tipo == "bonus")
 
 
 class _ManaResult(BaseModel):
@@ -202,6 +206,13 @@ def _order_by_position(positions: list[int], final_x: int) -> tuple[list[int], i
 _HAND_DEAL_TIMEOUT_S = 3.0
 
 
+def _left_combat(frame: np.ndarray | None) -> bool:
+    """True se a tela ja saiu de combate para mapa, baralho ou modal."""
+    if frame is None or frame.size == 0 or frame.shape[0] < 720 or frame.shape[1] < 1280:
+        return False
+    return signature(frame).verdict in (Verdict.MAP, Verdict.DIALOG, Verdict.DECK)
+
+
 def _wait_for_hand() -> tuple[np.ndarray, CardSlots]:
     """Espera as cartas TERMINAREM de entrar antes de contar.
 
@@ -223,6 +234,9 @@ def _wait_for_hand() -> tuple[np.ndarray, CardSlots]:
     while True:
         frame = cv2.imread(str(grab(state="scan_0")))
         slots = detect_card_slots(frame)
+        if _left_combat(frame):
+            logger.info("Tela saiu de combate durante espera da mao")
+            return frame, slots
         n = slots.visible_total
         if n and n == anterior:
             logger.debug(
@@ -281,13 +295,13 @@ def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) ->
 
     frame, slots = _wait_for_hand()
     selected = slots.selected
-    if selected is None and slots.visible_total:
+    if selected is None and slots.visible_total and not _left_combat(frame):
         frame, selected = _enter_hand(frame)
     for step in range(_MAX_HAND):
-        if mana is None:
-            mana = read_mana_hybrid(frame, book)
-        if hp is None:
-            hp = read_hp_hybrid(frame, book)
+        if _left_combat(frame):
+            return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp, in_combat=False)
+        mana = read_mana_hybrid(frame, book) if mana is None else mana
+        hp = read_hp_hybrid(frame, book) if hp is None else hp
         if selected is None:
             logger.info("Sem carta destacada no passo {} — fim da travessia", step)
             break
@@ -300,7 +314,7 @@ def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) ->
         frame, selected = _tap_and_wait(final_x)
 
     if not positions:
-        return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp)
+        return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp, in_combat=not _left_combat(frame))
     order, cursor = _order_by_position(positions, final_x)
     return HandScan(cards=[cards[i] for i in order], cursor_idx=cursor, mana=mana, hp=hp)
 
@@ -319,6 +333,27 @@ def _identify(frame: np.ndarray, circle: CostCircle, db: CardDB | None) -> str |
     return hit.nome if hit is not None else None
 
 
+# Similaridade mínima entre nomes pra tolerar variações de OCR do VLM ("Tomo Leve"
+# vs "Torno Leve" = 0.89; "Pummarola" vs "Punmarola" = 0.89; cartas distintas <= 0.55).
+_NAME_MATCH_RATIO = 0.80
+
+
+def _same_name(a: str, b: str) -> bool:
+    na, nb = a.strip().lower(), b.strip().lower()
+    return na == nb or SequenceMatcher(None, na, nb).ratio() >= _NAME_MATCH_RATIO
+
+
+def _current_hand_index(current: str, hand: list[CardScanFrame], slots: CardSlots) -> int | None:
+    """Índice em `hand` da carta sob o cursor, desempatando cópias pela posição no leque."""
+    matches = [i for i, c in enumerate(hand) if _same_name(c.nome, current)]
+    if not matches:
+        return None
+    if len(matches) == 1 or slots.selected_idx is None or slots.visible_total <= 1:
+        return matches[0]
+    expected = slots.selected_idx * (len(hand) - 1) / (slots.visible_total - 1)
+    return min(matches, key=lambda i: abs(i - expected))
+
+
 def seek_card(
     target: int, hand: list[CardScanFrame], db: CardDB | None, max_steps: int = _MAX_HAND
 ) -> bool:
@@ -331,20 +366,24 @@ def seek_card(
     Cartas de mesmo nome são intercambiáveis: se a mão tem dois "Tomo Vazio",
     jogar qualquer um dá no mesmo, então parar no primeiro que casar é correto.
     """
-    if not 0 <= target < len(hand):
+    if db is None or not 0 <= target < len(hand):
         return False
     wanted = hand[target].nome
     for _ in range(max_steps):
         frame = cv2.imread(str(grab(state="seek")))
-        selected = detect_card_slots(frame).selected
+        slots = detect_card_slots(frame)
+        selected = slots.selected
+        if selected is None and slots.visible_total:
+            frame, selected = _enter_hand(frame)
+            slots = detect_card_slots(frame) if frame is not None else slots
         if selected is None:
             return False
         current = _identify(frame, selected, db)
-        if current == wanted:
+        if current is not None and _same_name(current, wanted):
             return True
-        if current is None or current not in [c.nome for c in hand]:
+        here = _current_hand_index(current, hand, slots) if current is not None else None
+        if here is None:
             return False  # perdemos a referência: melhor refazer a travessia
-        here = next(i for i, c in enumerate(hand) if c.nome == current)
         _tap_and_wait(selected.x, left=here > target)
     return False
 

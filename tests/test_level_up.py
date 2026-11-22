@@ -41,7 +41,8 @@ def test_navega_do_cursor_ate_a_escolha(executor):
 def test_cursor_ilegivel_nao_chuta(executor):
     """O palpite anterior era "está na opção mais à direita", herdado da mão de
     combate. Nas telas de escolha a selecionada é a que sobe — medida no índice 0
-    em três frames reais. Errar aqui escolhe a recompensa errada pro resto da run."""
+    em três frames reais. Quando o cursor abre sobre 'Adiar'/'Rolar Nov.', damos
+    um passo à esquerda pra entrar nas cartas sem confirmar no escuro."""
     exec_, decide = executor
     with mock.patch.object(
         agent, "perceive", return_value=percebido(opcoes=opcoes(3), indice_selecionada=None)
@@ -49,6 +50,7 @@ def test_cursor_ilegivel_nao_chuta(executor):
         agent.handle_level_up(None)
     assert exec_.select_and_confirm.call_count == 0
     assert exec_.confirm.call_count == 0
+    exec_.navigate_horizontal.assert_called_once_with(-1)
 
 
 def test_sem_opcoes_confirma_a_destacada(executor):

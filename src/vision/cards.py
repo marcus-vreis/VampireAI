@@ -60,6 +60,29 @@ _OCCLUSION_GAP_PX = 220
 # Tamanho da carta em múltiplos do lado do círculo, medido em frames reais.
 _CARD_W_RATIO, _CARD_H_RATIO = 7.4, 9.2
 _CARD_DX_RATIO, _CARD_DY_RATIO = -0.60, -0.25
+# O círculo da carta selecionada pulsa entre 29px e 40px enquanto a carta em si
+# não muda de tamanho. Escalar o recorte pelo lado instantâneo do pulso variava
+# a janela em até 82px e deslocava o dHash em 63-135 bits (acima de _MAX_DISTANCE=60).
+# Fixar a escala em 33px (selecionada) ou 24px (normal) centrada no círculo zera
+# a deriva de pulso (dist=0 de 29 a 40px).
+_SELECTED_MIN_SIDE = 28
+_SELECTED_CARD_SIDE = 33
+_NORMAL_CARD_SIDE = 24
+
+# Nas telas de level up com 4 opções, as 3 cartas normais deslocam ~87px à
+# esquerda (3º círculo em x=659 contra x>=725 nas de 3 opções) e a 4ª carta é
+# um bônus em x=895..965 sem círculo azul. Nas telas de baú/joia, as 3 cartas
+# holográficas ocupam as colunas abaixo (brilho médio >=90 em y=215..325, contra
+# <=84.7 em qualquer tela fora de escolha).
+_FOUR_CARDS_THIRD_MAX_X = 680
+_FOURTH_CARD_STRIP_X = (895, 965)
+_FOURTH_CARD_TOP_Y = (170, 260)
+_CARD_EDGE_BRIGHT = 100.0
+_GEM_ART_Y = (215, 325)
+_GEM_TOP_Y = (150, 210)
+_GEM_MIN_MEAN = 90.0
+_GEM_DEFAULT_TOP_Y = 179
+_GEM_COLS = ((399, 410, 530), (572, 580, 700), (745, 750, 870))
 
 
 @dataclass(frozen=True)
@@ -205,7 +228,41 @@ def detect_choice_slots(frame: np.ndarray) -> CardSlots:
     orbe decorativo grande que vencia o critério de tamanho e apontava a carta
     errada. A selecionada é a que sobe — medido em 24-30px acima das demais.
     """
-    return _slots(frame, _CHOICE_BOX, _highest_index)
+    x0, y0, x1, y1 = _CHOICE_BOX
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[y0:y1, x0:x1]
+    circles = _complete_choice_circles(frame, _dedup(_candidates(hsv, x0, y0)))
+    return CardSlots(circles=circles, selected_idx=_highest_index(circles))
+
+
+def _complete_choice_circles(frame: np.ndarray, circles: list[CostCircle]) -> list[CostCircle]:
+    """Completa a 4ª carta de bônus no level up ou as 3 joias holográficas do baú."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if len(circles) == 3 and circles[2].x < _FOUR_CARDS_THIRD_MAX_X:
+        y0, y1 = _FOURTH_CARD_TOP_Y
+        x0, x1 = _FOURTH_CARD_STRIP_X
+        strip = gray[y0:y1, x0:x1].mean(axis=1)
+        if (strip > _CARD_EDGE_BRIGHT).any():
+            top_y = y0 + int(np.argmax(strip > _CARD_EDGE_BRIGHT))
+            s = circles[2].side
+            circles = [*circles, CostCircle(x=2 * circles[2].x - circles[1].x, y=top_y, w=s, h=s)]
+    elif len(circles) < 3:
+        circles = _gem_choice_circles(gray)
+    return circles
+
+
+def _gem_choice_circles(gray: np.ndarray) -> list[CostCircle]:
+    """Âncoras das 3 cartas de joia quando a oferta não usa círculos azuis de custo."""
+    ay0, ay1 = _GEM_ART_Y
+    if not all(float(gray[ay0:ay1, c0:c1].mean()) >= _GEM_MIN_MEAN for _, c0, c1 in _GEM_COLS):
+        return []
+    ty0, ty1 = _GEM_TOP_Y
+    out: list[CostCircle] = []
+    for ax, c0, c1 in _GEM_COLS:
+        strip = gray[ty0:ty1, c0:c1].mean(axis=1)
+        has_edge = bool((strip > _CARD_EDGE_BRIGHT).any())
+        top_y = ty0 + int(np.argmax(strip > _CARD_EDGE_BRIGHT)) if has_edge else _GEM_DEFAULT_TOP_Y
+        out.append(CostCircle(x=ax, y=top_y, w=_NORMAL_CARD_SIDE, h=_NORMAL_CARD_SIDE))
+    return out
 
 
 def _slots(frame: np.ndarray, box: tuple[int, int, int, int], pick) -> CardSlots:
@@ -234,15 +291,20 @@ def card_bbox(circle: CostCircle, side: int | None = None) -> tuple[int, int, in
     deliberada — este recorte é o que vai pro VLM ler, então cortar o fim do nome
     ou da descrição custa mais caro que incluir um pedaço da carta vizinha.
 
-    `side` sobrescreve a escala. Serve pras cartas de bônus, que no lugar do
-    círculo de custo trazem um orbe decorativo bem maior: usar o lado dele
-    inflava o recorte a 296x368 contra os ~180x230 das cartas normais, e o
-    excesso de contexto atrapalhava a leitura.
+    `side` sobrescreve a escala. Quando omitido, usa escala fixa centrada no
+    círculo (`_SELECTED_CARD_SIDE` ou `_NORMAL_CARD_SIDE`) para que o pulso do
+    círculo selecionado (29-40px) não altere o tamanho do recorte nem o dHash.
     """
-    s = side if side is not None else circle.side
+    if side is not None:
+        s = side
+        ox, oy = circle.x, circle.y
+    else:
+        s = _SELECTED_CARD_SIDE if circle.side >= _SELECTED_MIN_SIDE else _NORMAL_CARD_SIDE
+        ox = circle.x + circle.w // 2 - s // 2
+        oy = circle.y + circle.h // 2 - s // 2
     return (
-        int(circle.x + _CARD_DX_RATIO * s),
-        int(circle.y + _CARD_DY_RATIO * s),
+        int(ox + _CARD_DX_RATIO * s),
+        int(oy + _CARD_DY_RATIO * s),
         int(_CARD_W_RATIO * s),
         int(_CARD_H_RATIO * s),
     )

@@ -28,10 +28,23 @@ class WindowLookup:
     hwnd: int = 0
 
 
+def _ensure_interactive_desktop(u32) -> None:
+    if u32.GetForegroundWindow():
+        return
+    hwinsta = u32.OpenWindowStationW("WinSta0", False, 0x00020000 | 0x037F)
+    if hwinsta:
+        u32.SetProcessWindowStation(hwinsta)
+    hdesk = u32.OpenDesktopW("Default", 0, False, 0x01FF)
+    if hdesk:
+        u32.SetThreadDesktop(hdesk)
+
+
 def _user32():
     if sys.platform != "win32":
-        raise RuntimeError("Lookup de janela só existe no Windows")
-    return ctypes.WinDLL("user32", use_last_error=True)
+        raise RuntimeError("Lookup de janela so existe no Windows")
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    _ensure_interactive_desktop(u32)
+    return u32
 
 
 def _iter_top_level(u32) -> list[tuple[int, str]]:

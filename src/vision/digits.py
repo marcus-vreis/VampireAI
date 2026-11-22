@@ -34,9 +34,10 @@ _MIN_VOTES = 2
 # Busca por vizinho mais próximo, não igualdade de chave. O mesmo algarismo não
 # produz sempre o mesmo mapa de bits: os dígitos do coração medem 17px e são
 # AMPLIADOS até 12x18, o que introduz ruído de quantização. Medido sobre 216
-# bits: mesmo dígito varia até 57; dígitos diferentes ficam a 92 no mínimo.
-# 72 fica no meio, com ~1.27x de folga pros dois lados.
-_MAX_GLYPH_DISTANCE = 72
+# bits: mesmo dígito varia até 45 ao vizinho mais próximo (normal x HUD escuro);
+# dígitos diferentes começam em 49 (6 x 3 e 6 x 5 = 49, 2 x 3 e 3 x 5 = 50).
+# 46 separa os dois sem confundir '3' com '2' ou '6'.
+_MAX_GLYPH_DISTANCE = 46
 
 _MIN_AREA = 60
 _MIN_HEIGHT = 14

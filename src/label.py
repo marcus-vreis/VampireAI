@@ -431,9 +431,18 @@ def _mostrar(v: object) -> str:
     return str(v)
 
 
+def _verdict_agrees(state: str, cv_verdict: str) -> bool:
+    """Confere se o veredito bruto da CV roteia pro subgrupo correto do estado."""
+    if state in _DIALOGOS:
+        return cv_verdict == Verdict.DIALOG.value
+    if state in (Verdict.MAP.value, Verdict.COMBAT.value, Verdict.DECK.value):
+        return cv_verdict == state
+    return cv_verdict == Verdict.UNKNOWN.value
+
+
 def _report(record: dict, feito: collections.Counter) -> None:
     estado = record["state"]
-    agree = record["cv_verdict"] in (estado, "dialog")
+    agree = _verdict_agrees(estado, record["cv_verdict"])
     detalhes = "".join(_confere(record, p) for p in _PERGUNTAS.get(estado, ()))
     logger.info(
         "{} rotulado={} cv={}{}  [{}/{}]",
@@ -603,12 +612,22 @@ def _tabela_detalhes(by_state: dict[str, list[dict]]) -> str:
     return "\n".join(linhas)
 
 
+def _refresh_observed(record: dict) -> dict:
+    """Recalcula `cv_*` no PNG atual para medir o código vigente, não o da captura."""
+    path = DATASET_DIR / record.get("file", "")
+    if not path.is_file():
+        return record
+    return {**record, **_observed(path)}
+
+
 def summary() -> int:
     if not LABELS_FILE.is_file():
         print("Nenhum rótulo ainda. Rode `python -m src.label` pra criar.")
         return 1
     records = [
-        json.loads(ln) for ln in LABELS_FILE.read_text(encoding="utf-8").splitlines() if ln.strip()
+        _refresh_observed(json.loads(ln))
+        for ln in LABELS_FILE.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
     ]
     by_state: dict[str, list[dict]] = {}
     for r in records:
@@ -617,7 +636,7 @@ def summary() -> int:
     print(f"{len(records)} frames rotulados\n")
     print(f"{'estado':20} {'n':>4} {'meta':>5} {'CV concorda':>12}")
     for state, rows in sorted(by_state.items()):
-        agree = sum(1 for r in rows if r["cv_verdict"] in (state, "dialog"))
+        agree = sum(1 for r in rows if _verdict_agrees(state, r["cv_verdict"]))
         meta = _META.get(state, 0)
         print(f"{state:20} {len(rows):>4} {meta:>5} {100 * agree / len(rows):>11.0f}%")
 

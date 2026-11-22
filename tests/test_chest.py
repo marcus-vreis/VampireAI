@@ -81,7 +81,8 @@ def test_indice_fora_do_intervalo_e_preso(executor):
 
 
 def test_bau_com_cursor_ilegivel_nao_chuta(executor):
-    """Escolher a recompensa errada compromete o resto da run."""
+    """Escolher a recompensa errada compromete o resto da run: move o cursor pra
+    dentro das cartas sem confirmar nem sacar."""
     exec_, decide = executor
     opcoes = [{"posicao": i, "nome": f"c{i}", "e_bonus": False} for i in range(3)]
     with mock.patch.object(
@@ -90,3 +91,4 @@ def test_bau_com_cursor_ilegivel_nao_chuta(executor):
         agent.handle_chest(None)
     assert exec_.select_and_confirm.call_count == 0
     assert exec_.cancel.call_count == 0, "também não pode sacar dinheiro havendo carta"
+    exec_.navigate_horizontal.assert_called_once_with(-1)

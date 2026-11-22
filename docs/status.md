@@ -264,6 +264,42 @@ Saiu input real e desconectou o controle no jogo aberto. A trava agora mora em
 **Testes:** 111 passando. **GitHub:** branch `sensor-deterministico`, PR #1.
 
 
+### Sessão 2026-10-19 — estabilização de combate, baús e escolhas (ADR-091 a ADR-095)
+
+Diagnóstico sobre as 4 runs reais (`logs/runs.jsonl`, `logs/llm.jsonl`) e os 39
+frames rotulados de `dataset/labels.jsonl`:
+
+- **Recorte de carta invariante ao pulso (`src/vision/cards.py`, ADR-091):**
+  `card_bbox` escalava pelo `side` instantâneo do círculo selecionado (29–40px),
+  deslocando o dHash em 63–135 bits a cada pulso e fazendo `seek_card` falhar 22/24
+  vezes na run 4. Agora usa escala fixa centrada no círculo (`33px` selecionada,
+  `24px` normal), zerando a deriva de pulso (`dist = 0` de 29 a 40px).
+- **`seek_card` resiliente (`src/perception.py`, ADR-091):** entra na mão via
+  `_enter_hand` quando o cursor cai fora do leque após jogar uma carta, tolera
+  pequenas variações de OCR no nome (`_NAME_MATCH_RATIO = 0.80`) e desempata cartas
+  repetidas pela posição do cursor no leque.
+- **Classificação de baú e game over (`src/vision/screen.py`, ADR-092):** `chest`,
+  `boss_chest`, `chest_card_target` e `game_over` saíam como `COMBAT` porque mantêm
+  o HUD visível sem painel slate. Medido nos 59 frames: as placas bege de turno
+  (`_TURN_BUTTON_PRESENT = 0.50`) separam 100% dos frames de combate (0.734–0.997
+  contra 0.000), e o botão vermelho inferior (`_CHEST_BUTTON_PRESENT = 0.50`)
+  separa 100% das telas de baú/joia (0.801 contra <=0.195).
+- **4ª carta de bônus, joias de baú e cursor inicial (`src/vision/cards.py`,
+  `src/agent.py`, ADR-093):** `detect_choice_slots` agora detecta a 4ª carta de
+  bônus com orbe laranja no level up e as 3 cartas holográficas de joia no baú
+  (100% em `offered` e `cursor` nas 16 telas de escolha). Quando o cursor abre fora
+  das cartas (`cur is None`), `_choose_and_confirm` move um passo à esquerda
+  (`navigate_horizontal(-1)`) sem chutar.
+- **Colisão de glifos no HUD (`src/vision/digits.py`, ADR-094):** reduzido
+  `_MAX_GLYPH_DISTANCE` de 72 para 46 bits (mesmo dígito <=45, dígitos distintos
+  >=49), eliminando a colisão do `3` do orbe com o `6` do coração e o `2` do orbe.
+- **Higiene de testes e `label --summary` (`src/label.py`, ADR-095):** isolado
+  `RUNS_LOG` nos testes de loop e atualizado `label.summary()` para recalcular
+  `_observed` ao vivo sobre os PNGs de `dataset/`.
+
+**Testes:** 325 passando.
+
+
 ## Próximo
 
 ### Depende de você jogar

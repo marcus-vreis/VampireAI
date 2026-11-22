@@ -166,3 +166,17 @@ def test_le_o_coracao_em_combate_com_o_indicador_extra(book):
         book.teach(row, 61)
         book.teach(row, 61)
     assert read_hp(frame, book) == (61, 61)
+
+
+def test_tres_no_orbe_nao_colide_com_seis_do_coracao(book):
+    """Com `_MAX_GLYPH_DISTANCE = 72`, o '3' do orbe casava com o '6' do coração
+    (distância 49) e o livro devolvia mana=6 sem consultar o modelo."""
+    combate_mana_3 = _RAIZ / "dataset" / "20260901T191119868_label_combat.png"
+    if not combate_mana_3.is_file():
+        pytest.skip("frame de combate ausente")
+    seis = next(g for g in heart_glyphs(load()) if g.x < 60)
+    book.teach([seis], 6)
+    book.teach([seis], 6)
+    tres = orb_glyphs(cv2.imread(str(combate_mana_3)))
+    assert len(tres) == 1
+    assert book.lookup(tres[0].key) is None

@@ -111,9 +111,7 @@ def _relevant(linhas: list[str]) -> list[str]:
 
 
 def _combat_prompt(scan: HandScan, memory: Memory | None, complaint: str | None) -> str:
-    hand = [
-        {"indice": i, **c.model_dump()} for i, c in enumerate(scan.cards)
-    ]
+    hand = [{"indice": i, **c.model_dump()} for i, c in enumerate(scan.cards)]
     parts = [
         (PATHS.prompts / "combat_decide.txt").read_text(encoding="utf-8"),
         _memory_block(memory),
@@ -162,7 +160,9 @@ def _decide_combat(scan: HandScan, memory: Memory | None) -> CombatAction | None
         assert isinstance(verdict, Rejection)
         logger.warning(
             "Jogada ilegal (tentativa {}/{}): {}",
-            attempt + 1, _MAX_ILLEGAL_RETRIES + 1, verdict.reason,
+            attempt + 1,
+            _MAX_ILLEGAL_RETRIES + 1,
+            verdict.reason,
         )
         _RUN.jogadas_ilegais += 1
         complaint = verdict.reason
@@ -259,35 +259,38 @@ def _current_hand() -> HandScan:
     return _HAND.model_copy(update={"mana": mana, "hp": hp})
 
 
+def _end_combat_turn(motivo: str, memory: Memory | None = None) -> None:
+    logger.info(motivo)
+    _RUN.turnos_encerrados += 1
+    input_exec.end_turn()
+    if memory is not None:
+        _remember(memory, f"combate: {motivo}", "combat")
+    forget_hand()
+
+
 def handle_combat(memory: Memory | None = None) -> None:
     """Percorre a mão (ou reusa a conhecida), decide UMA jogada, valida e executa."""
     global _HAND
     scan = _current_hand()
     _HAND = scan
-    if not scan.cards:
-        logger.info("Sem cartas legíveis na mão — finalizando turno")
-        _RUN.turnos_encerrados += 1
-        input_exec.end_turn()
+    if not getattr(scan, "in_combat", True):
+        logger.info("Tela saiu de combate durante leitura da mão — reavaliando")
         forget_hand()
+        return
+    if not scan.cards:
+        _end_combat_turn("Sem cartas legíveis na mão — finalizando turno")
         return
 
     action = _decide_combat(scan, memory)
     if action is None:
         target = fallback_index(scan.cards, scan.mana)
         if target is None:
-            logger.info("Nada jogável com {} de mana — finalizando turno", scan.mana)
-            _RUN.turnos_encerrados += 1
-            input_exec.end_turn()
-            forget_hand()
+            _end_combat_turn(f"Nada jogável com {scan.mana} de mana — finalizando turno")
             return
         logger.info("Modelo não achou jogada legal — regra de custo crescente: idx={}", target)
         motivo = "regra de reserva: custo crescente"
     elif action.acao == "finalizar_turno":
-        logger.info("Finalizando turno: {}", action.motivo)
-        _RUN.turnos_encerrados += 1
-        input_exec.end_turn()
-        _remember(memory, f"combate: finalizar turno ({action.motivo})", "combat")
-        forget_hand()
+        _end_combat_turn(f"Finalizando turno: {action.motivo}", memory)
         return
     else:
         target = action.indice_alvo
@@ -312,9 +315,7 @@ def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) 
         _remember(memory, f"combate: jogou {card.nome} — {motivo}", "combat")
         _RUN.cartas_jogadas.append(card.nome)
         input_exec.confirm()
-        _HAND = scan.model_copy(
-            update={"cards": scan.cards[:target] + scan.cards[target + 1 :]}
-        )
+        _HAND = scan.model_copy(update={"cards": scan.cards[:target] + scan.cards[target + 1 :]})
         return
     logger.warning(
         "Não consegui posicionar o cursor em '{}' — refazendo a leitura da mão",
@@ -357,7 +358,10 @@ def handle_map(memory: Memory | None = None) -> None:
 
     logger.info(
         "Mapa: em {} olhando {} -> {} (alvo: {})",
-        minimap.player, minimap.facing.value, step.turn.value, step.reason,
+        minimap.player,
+        minimap.facing.value,
+        step.turn.value,
+        step.reason,
     )
     if step.turn is Turn.BACK:
         input_exec.turn_right()
@@ -367,9 +371,7 @@ def handle_map(memory: Memory | None = None) -> None:
     _TURN_ACTION[step.turn]()
 
 
-def _decide_choice(
-    state_json: str, contexto: str, memory: Memory | None = None
-) -> ChoiceAction:
+def _decide_choice(state_json: str, contexto: str, memory: Memory | None = None) -> ChoiceAction:
     prompt = (
         f"Você é o ESTRATEGISTA. Escolha a melhor opção do {contexto}.\n"
         "Considere sinergia com deck atual, custo, evitar redundância.\n"
@@ -396,12 +398,15 @@ def _choose_and_confirm(
     cursor seguir ilegível, o antitravamento aperta X e leva a opção em destaque.
     """
     if cur is None:
-        logger.warning("{}: cursor ilegível — recapturando em vez de chutar", contexto)
+        logger.warning("{}: cursor fora das cartas — movendo à esquerda para entrar", contexto)
+        input_exec.navigate_horizontal(-1)
         return
     choice = _decide_choice(json.dumps(opcoes, ensure_ascii=False), contexto, memory)
     target = max(0, min(choice.indice_alvo, len(opcoes) - 1))
     if target != choice.indice_alvo:
-        logger.warning("Índice {} fora de 0..{} — usando {}", choice.indice_alvo, len(opcoes) - 1, target)
+        logger.warning(
+            "Índice {} fora de 0..{} — usando {}", choice.indice_alvo, len(opcoes) - 1, target
+        )
     logger.info("{}: escolhe idx={} ({})", contexto, target, choice.motivo)
     _remember(memory, f"{contexto}: idx={target} ({choice.motivo})", contexto)
     _RUN.escolhas.append(f"{contexto}: {opcoes[target].get('nome', f'idx {target}')}")
@@ -587,7 +592,9 @@ def preflight(countdown_s: int = _COUNTDOWN_S) -> bool:
     if janela.source != "win32":
         logger.error("Janela do Vampire Crawlers não encontrada. O jogo está aberto?")
         return False
-    logger.info("Janela: {}x{} em ({}, {})", janela.rect.w, janela.rect.h, janela.rect.x, janela.rect.y)
+    logger.info(
+        "Janela: {}x{} em ({}, {})", janela.rect.w, janela.rect.h, janela.rect.x, janela.rect.y
+    )
 
     try:
         ask_vlm(None, "responda: ok")
@@ -691,7 +698,9 @@ def historico() -> int:
         print(f"Nenhuma run registrada ainda. Rode o agente; o resumo vai pra {RUNS_LOG}.")
         return 1
     linhas = [json.loads(x) for x in RUNS_LOG.read_text(encoding="utf-8").splitlines() if x]
-    print(f"{'quando':17} {'min':>5} {'passos':>7} {'cartas':>7} {'recomp':>7} {'ilegais':>8} {'destrav':>8}  motivo")
+    print(
+        f"{'quando':17} {'min':>5} {'passos':>7} {'cartas':>7} {'recomp':>7} {'ilegais':>8} {'destrav':>8}  motivo"
+    )
     print("-" * 90)
     for r in linhas[-20:]:
         print(
@@ -710,9 +719,7 @@ def main() -> int:
         action="store_true",
         help="Confirma execução real (consome GPU pesado)",
     )
-    parser.add_argument(
-        "--historico", action="store_true", help="Mostra as runs anteriores e sai."
-    )
+    parser.add_argument("--historico", action="store_true", help="Mostra as runs anteriores e sai.")
     args = parser.parse_args()
 
     if args.historico:

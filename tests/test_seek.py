@@ -52,9 +52,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def mao():
-    return [
-        CardScanFrame(nome=n, mana=1, descricao=None, tipo="ataque") for n in MAO
-    ]
+    return [CardScanFrame(nome=n, mana=1, descricao=None, tipo="ataque") for n in MAO]
 
 
 class Trilha:
@@ -116,8 +114,53 @@ def test_indice_fora_da_mao_falha_sem_tocar_no_controle(db, mao):
 
 
 def test_sem_cache_nao_tenta_posicionar(mao):
-    with mock.patch.object(perception, "gamepad") as pad, mock.patch.object(
-        perception, "grab", Trilha([SEQUENCIA[0][0]])
+    with (
+        mock.patch.object(perception, "gamepad") as pad,
+        mock.patch.object(perception, "grab", Trilha([SEQUENCIA[0][0]])),
     ):
         assert not perception.seek_card(0, mao, None)
     assert pad.tap_left.call_count == 0
+
+
+def test_entra_na_mao_se_o_cursor_comeca_fora(db, mao):
+    """Depois de jogar uma carta o cursor pode cair fora do leque; `seek_card`
+    precisa pôr o cursor de volta na mão antes de desistir."""
+    sem_cursor = _RAIZ / "dataset" / "20260830T135106101_label_combat.png"
+    com_cursor = caminho(SEQUENCIA[0][0])
+    if not sem_cursor.is_file():
+        pytest.skip("frame sem cursor ausente")
+    img_com = cv2.imread(str(com_cursor))
+    selecionada = detect_card_slots(img_com).selected
+    with (
+        mock.patch.object(perception, "grab", return_value=sem_cursor),
+        mock.patch.object(perception, "_enter_hand", return_value=(img_com, selecionada)) as entrar,
+    ):
+        assert perception.seek_card(MAO.index("Gatti Amari"), mao, db)
+    assert entrar.call_count == 1
+
+
+def test_tolera_pequena_variacao_de_grafia_no_nome(db):
+    """O VLM às vezes transcreve 'Torno Leve' num turno e 'Tomo Leve' no outro."""
+    mao_typo = [
+        CardScanFrame(nome="Gati Amari", mana=1, descricao=None, tipo="ataque"),
+    ]
+    trilha = Trilha([SEQUENCIA[0][0]])
+    with (
+        mock.patch.object(perception, "grab", trilha),
+        mock.patch.object(perception, "gamepad"),
+    ):
+        assert perception.seek_card(0, mao_typo, db)
+
+
+def test_desempata_cartas_repetidas_pela_posicao_no_leque():
+    """Com duas cópias da mesma carta nas pontas (índices 0 e 4) e o cursor na
+    direita, o índice atual tem que ser 4 (para andar à esquerda rumo ao alvo 2)."""
+    from src.vision.cards import CardSlots, CostCircle
+
+    mao_dupla = [
+        CardScanFrame(nome=n, mana=1, descricao=None, tipo="ataque")
+        for n in ["Alho", "Tomo", "Faca", "Otto", "Alho"]
+    ]
+    circles = [CostCircle(x=300 + 100 * i, y=500, w=30 if i == 4 else 22, h=22) for i in range(5)]
+    slots = CardSlots(circles=circles, selected_idx=4)
+    assert perception._current_hand_index("Alho", mao_dupla, slots) == 4
