@@ -67,6 +67,19 @@ def test_jogar_remove_a_carta_da_mao_conhecida(mao):
     assert [c.nome for c in agent._HAND.cards] == ["Tomo", "Faca"]
 
 
+def test_jogar_remove_o_hash_junto_com_a_carta(mao):
+    """Hash desalinhado de `cards` faria a busca seguinte mirar a carta vizinha."""
+    com_hash = mao.model_copy(update={"hashes": ["h-tomo", "h-alho", "h-faca"]})
+    with (
+        mock.patch.object(agent, "seek_card", return_value=True) as seek,
+        mock.patch.object(agent, "input_exec"),
+        mock.patch.object(agent, "default_carddb"),
+    ):
+        agent._play_card(1, com_hash, None, "teste")
+    assert seek.call_args.kwargs["hashes"] == ["h-tomo", "h-alho", "h-faca"]
+    assert agent._HAND.hashes == ["h-tomo", "h-faca"]
+
+
 def test_falha_ao_posicionar_esquece_a_mao(mao):
     """Se o cursor não chegou na carta, a mão conhecida pode estar errada."""
     agent._HAND = mao

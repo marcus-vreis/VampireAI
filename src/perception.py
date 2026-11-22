@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from src import gamepad
 from src.capture import grab
-from src.carddb import CardDB, CardRecord
+from src.carddb import CardDB, CardRecord, hash_distance, perceptual_hash
 from src.config import PATHS
 from src.llm import ask_vlm
 from src.schemas import CardScanFrame, ChestState, LevelUpState, ShopState
@@ -62,6 +62,9 @@ class HandScan(BaseModel):
     mana: int | None = None
     hp: tuple[int, int] | None = None  # (atual, máximo)
     in_combat: bool = True
+    # dHash de cada carta, alinhado a `cards`. Identidade pelo visual desta mão,
+    # que não depende do nome que o VLM transcreveu (ADR-096).
+    hashes: list[str] = []
 
     @property
     def total(self) -> int:
@@ -289,6 +292,7 @@ def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) ->
     """
     positions: list[int] = []
     cards: list[CardScanFrame] = []
+    hashes: list[str] = []
     mana: int | None = None
     hp: tuple[int, int] | None = None
     final_x = 0
@@ -309,14 +313,22 @@ def scan_combat_hand(db: CardDB | None = None, book: GlyphBook | None = None) ->
         if any(abs(selected.x - p) < _SAME_CARD_PX for p in positions):
             break  # voltou a uma carta já lida: a mão inteira foi vista
         positions.append(selected.x)
-        cards.append(_read_with_retry(_crop_card(frame, selected), db))
+        crop = _crop_card(frame, selected)
+        hashes.append(perceptual_hash(crop))
+        cards.append(_read_with_retry(crop, db))
         logger.info("scan {}: {} (mana={})", len(cards), cards[-1].nome, cards[-1].mana)
         frame, selected = _tap_and_wait(final_x)
 
     if not positions:
         return HandScan(cards=[], cursor_idx=0, mana=mana, hp=hp, in_combat=not _left_combat(frame))
     order, cursor = _order_by_position(positions, final_x)
-    return HandScan(cards=[cards[i] for i in order], cursor_idx=cursor, mana=mana, hp=hp)
+    return HandScan(
+        cards=[cards[i] for i in order],
+        hashes=[hashes[i] for i in order],
+        cursor_idx=cursor,
+        mana=mana,
+        hp=hp,
+    )
 
 
 def read_hud(book: GlyphBook | None = None) -> tuple[int | None, tuple[int, int] | None]:
@@ -325,12 +337,18 @@ def read_hud(book: GlyphBook | None = None) -> tuple[int | None, tuple[int, int]
     return read_mana_hybrid(frame, book), read_hp_hybrid(frame, book)
 
 
-def _identify(frame: np.ndarray, circle: CostCircle, db: CardDB | None) -> str | None:
-    """Nome da carta destacada pelo cache. None se ela não é conhecida."""
-    if db is None:
+def _identify(frame: np.ndarray, circle: CostCircle, db: CardDB) -> str | None:
+    """Nome da carta destacada: cache, e o modelo quando o cache erra.
+
+    Só o cache não bastava: o mesmo sprite chega a 88 bits de distância conforme
+    o contexto (limiar 60), e cada erro abortava a jogada. Na run de 2026-11-22,
+    14 de 22 posicionamentos falharam. Ver ADR-096.
+    """
+    try:
+        return read_card(_crop_card(frame, circle), db).nome
+    except (RuntimeError, ValueError) as e:
+        logger.warning("Carta sob o cursor ilegível: {}", e)
         return None
-    hit = db.lookup(_crop_card(frame, circle))
-    return hit.nome if hit is not None else None
 
 
 # Similaridade mínima entre nomes pra tolerar variações de OCR do VLM ("Tomo Leve"
@@ -354,8 +372,49 @@ def _current_hand_index(current: str, hand: list[CardScanFrame], slots: CardSlot
     return min(matches, key=lambda i: abs(i - expected))
 
 
+# Corte do casamento por hash DENTRO da mão. Medido em 2026-11-22 sobre 22
+# leituras reais pareadas pelo log: cartas diferentes da mesma travessia ficam em
+# 90-150 bits (n=46); o mesmo nome entre turnos, em 21-113 (9 de 14 abaixo de 80).
+# Amostra pequena: o nome continua como segunda via (ADR-096).
+_HAND_HASH_BITS = 80
+
+
+def _hash_index(card_hash: str, hashes: list[str]) -> int | None:
+    """Índice da carta desta mão com o visual mais próximo, se perto o bastante."""
+    if not hashes:
+        return None
+    best, i = min((hash_distance(card_hash, h), i) for i, h in enumerate(hashes))
+    return i if best <= _HAND_HASH_BITS else None
+
+
+def _locate(
+    frame: np.ndarray,
+    selected: CostCircle,
+    slots: CardSlots,
+    hand: list[CardScanFrame],
+    hashes: list[str],
+    db: CardDB,
+) -> tuple[int | None, str | None]:
+    """Onde o cursor está na mão: (índice, nome lido). (None, None) se ilegível.
+
+    Hash primeiro: é de graça e não depende do texto que o VLM transcreveu, que
+    variou entre "Otto, o PS", "Otto, o Pardal" e "462 de dano." na mesma run.
+    """
+    here = _hash_index(perceptual_hash(_crop_card(frame, selected)), hashes)
+    if here is not None:
+        return here, hand[here].nome
+    current = _identify(frame, selected, db)
+    if current is None:
+        return None, None
+    return _current_hand_index(current, hand, slots), current
+
+
 def seek_card(
-    target: int, hand: list[CardScanFrame], db: CardDB | None, max_steps: int = _MAX_HAND
+    target: int,
+    hand: list[CardScanFrame],
+    db: CardDB | None,
+    max_steps: int = _MAX_HAND,
+    hashes: list[str] | None = None,
 ) -> bool:
     """Move o cursor até a carta destacada SER a desejada. True se chegou.
 
@@ -369,23 +428,40 @@ def seek_card(
     if db is None or not 0 <= target < len(hand):
         return False
     wanted = hand[target].nome
+    left = True
     for _ in range(max_steps):
-        frame = cv2.imread(str(grab(state="seek")))
-        slots = detect_card_slots(frame)
-        selected = slots.selected
-        if selected is None and slots.visible_total:
-            frame, selected = _enter_hand(frame)
-            slots = detect_card_slots(frame) if frame is not None else slots
+        frame, slots, selected = _seek_frame()
         if selected is None:
+            logger.info("seek: cursor fora da mão — desistindo de '{}'", wanted)
             return False
-        current = _identify(frame, selected, db)
-        if current is not None and _same_name(current, wanted):
+        here, current = _locate(frame, selected, slots, hand, hashes or [], db)
+        if current is None:
+            return False
+        if here == target or _same_name(current, wanted):
             return True
-        here = _current_hand_index(current, hand, slots) if current is not None else None
-        if here is None:
-            return False  # perdemos a referência: melhor refazer a travessia
-        _tap_and_wait(selected.x, left=here > target)
+        if here is not None:
+            left = here > target
+        else:
+            # Comprada depois da última travessia: a mão conhecida está velha, mas
+            # a carta escolhida provavelmente continua lá. Seguir é mais barato
+            # que refazer a travessia e pedir outra decisão ao modelo (ADR-096).
+            logger.info("seek: '{}' não está na mão conhecida — seguindo", current)
+        _, after = _tap_and_wait(selected.x, left=left)
+        if after is not None and abs(after.x - selected.x) < _SAME_CARD_PX:
+            left = not left  # bateu na ponta do leque
+    logger.info("seek: '{}' não apareceu em {} passos", wanted, max_steps)
     return False
+
+
+def _seek_frame() -> tuple[np.ndarray, CardSlots, CostCircle | None]:
+    """Frame atual com o cursor posto na mão, se ele estava fora do leque."""
+    frame = cv2.imread(str(grab(state="seek")))
+    slots = detect_card_slots(frame)
+    selected = slots.selected
+    if selected is None and slots.visible_total:
+        frame, selected = _enter_hand(frame)
+        slots = detect_card_slots(frame) if frame is not None else slots
+    return frame, slots, selected
 
 
 def read_choices(frame: np.ndarray, db: CardDB | None = None) -> dict | None:

@@ -9,7 +9,7 @@ import cv2
 import pytest
 
 from src import perception
-from src.carddb import CardDB, CardRecord
+from src.carddb import CardDB, CardRecord, perceptual_hash
 from src.schemas import CardScanFrame
 from src.vision.cards import card_bbox, detect_card_slots
 
@@ -96,15 +96,61 @@ def test_anda_pra_esquerda_ate_ver_a_carta(db, mao):
     assert trilha.chamadas == 4
 
 
-def test_desiste_quando_a_carta_destacada_e_desconhecida(mao, tmp_path):
-    """Sem referência no cache não dá pra decidir a direção — melhor refazer."""
+class ModeloFalso:
+    """Substitui `ask_vlm` na leitura de carta: responde um nome fixo e conta."""
+
+    def __init__(self, nome: str | None) -> None:
+        self.nome = nome
+        self.chamadas = 0
+
+    def __call__(self, *args, **kwargs) -> dict:
+        self.chamadas += 1
+        if self.nome is None:
+            raise RuntimeError("VLM falhou 3x")
+        return {"nome": self.nome, "mana": 1, "descricao": None, "tipo": "ataque"}
+
+
+def test_carta_fora_do_cache_e_lida_pelo_modelo_e_aprendida(mao, tmp_path):
+    """O mesmo sprite chega a 88 bits de distância conforme o contexto (run de
+    2026-11-22), e desistir ali custava travessia + nova decisão. Ler custa uma
+    chamada, e ensina o cache pra próxima vez."""
     vazio = CardDB(tmp_path / "vazio.json")
-    trilha = Trilha([SEQUENCIA[0][0]])
+    modelo = ModeloFalso("Gatti Amari")
+    with (
+        mock.patch.object(perception, "grab", Trilha([SEQUENCIA[0][0]])),
+        mock.patch.object(perception, "gamepad"),
+        mock.patch.object(perception, "ask_vlm", modelo),
+    ):
+        assert perception.seek_card(MAO.index("Gatti Amari"), mao, vazio)
+    assert modelo.chamadas == 1
+    assert len(vazio) == 1, "a variante nova do sprite tem que ficar no cache"
+
+
+def test_desiste_quando_nem_o_modelo_identifica_a_carta(mao, tmp_path):
+    vazio = CardDB(tmp_path / "vazio.json")
+    with (
+        mock.patch.object(perception, "grab", Trilha([SEQUENCIA[0][0]])),
+        mock.patch.object(perception, "gamepad"),
+        mock.patch.object(perception, "ask_vlm", ModeloFalso(None)),
+    ):
+        assert not perception.seek_card(0, mao, vazio)
+
+
+def test_carta_comprada_depois_da_jogada_nao_interrompe_a_busca(db):
+    """Giovanna e Phiera entraram na mão depois da última travessia, então não
+    estão na mão conhecida. A busca segue na mesma direção até achar Otto."""
+    mao_velha = [
+        CardScanFrame(nome=n, mana=1, descricao=None, tipo="ataque")
+        for n in ["Magic", "Otto", "Gatti Amari", "Pugnala"]
+    ]
+    trilha = Trilha([s[0] for s in SEQUENCIA])
     with (
         mock.patch.object(perception, "grab", trilha),
         mock.patch.object(perception, "gamepad"),
+        mock.patch.object(perception, "_tap_and_wait", lambda x, left=True: (None, None)),
     ):
-        assert not perception.seek_card(0, mao, vazio)
+        assert perception.seek_card(1, mao_velha, db)
+    assert trilha.chamadas == 4, "Gatti -> Giovanna -> Phiera -> Otto"
 
 
 def test_indice_fora_da_mao_falha_sem_tocar_no_controle(db, mao):
@@ -150,6 +196,39 @@ def test_tolera_pequena_variacao_de_grafia_no_nome(db):
         mock.patch.object(perception, "gamepad"),
     ):
         assert perception.seek_card(0, mao_typo, db)
+
+
+def _hash_do_frame(name: str) -> str:
+    frame = cv2.imread(str(caminho(name)))
+    return perceptual_hash(perception._crop_card(frame, detect_card_slots(frame).selected))
+
+
+def test_hash_da_mao_localiza_carta_com_nome_mal_lido(tmp_path):
+    """Run de 2026-11-22: o VLM leu Otto como '462 de dano.' (a descrição), e a
+    busca, sem achar o nome na mão, andava às cegas pro lado errado. O hash da
+    própria travessia diz onde o cursor está sem depender do texto."""
+    mal_lido = CardDB(tmp_path / "cards.json")
+    otto = cv2.imread(str(caminho(SEQUENCIA[3][0])))
+    mal_lido.remember(
+        perception._crop_card(otto, detect_card_slots(otto).selected),
+        CardRecord(nome="462 de dano.", mana=2, descricao=None, tipo="ataque"),
+    )
+    mao = [CardScanFrame(nome=n, mana=1, descricao=None, tipo="ataque") for n in MAO]
+    longe = "00" * 32
+    hashes = [longe, _hash_do_frame(SEQUENCIA[3][0]), longe, longe, longe, longe]
+    hashes[MAO.index("Gatti Amari")] = _hash_do_frame(SEQUENCIA[0][0])
+    trilha = Trilha([SEQUENCIA[3][0], SEQUENCIA[0][0]])
+    lados = []
+    with (
+        mock.patch.object(perception, "grab", trilha),
+        mock.patch.object(perception, "gamepad"),
+        mock.patch.object(perception, "ask_vlm", ModeloFalso(None)),
+        mock.patch.object(
+            perception, "_tap_and_wait", lambda x, left=True: lados.append(left) or (None, None)
+        ),
+    ):
+        assert perception.seek_card(MAO.index("Gatti Amari"), mao, mal_lido, hashes=hashes)
+    assert lados == [False], "de Otto (1) até Gatti (4) é pra direita"
 
 
 def test_desempata_cartas_repetidas_pela_posicao_no_leque():

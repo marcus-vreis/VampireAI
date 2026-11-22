@@ -312,11 +312,16 @@ def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) 
     """
     global _HAND
     card = scan.cards[target]
-    if seek_card(target, scan.cards, default_carddb()):
+    if seek_card(target, scan.cards, default_carddb(), hashes=scan.hashes):
         _remember(memory, f"combate: jogou {card.nome} — {motivo}", "combat")
         _RUN.cartas_jogadas.append(card.nome)
         input_exec.confirm()
-        _HAND = scan.model_copy(update={"cards": scan.cards[:target] + scan.cards[target + 1 :]})
+        _HAND = scan.model_copy(
+            update={
+                "cards": scan.cards[:target] + scan.cards[target + 1 :],
+                "hashes": scan.hashes[:target] + scan.hashes[target + 1 :],
+            }
+        )
         return
     logger.warning(
         "Não consegui posicionar o cursor em '{}' — refazendo a leitura da mão",

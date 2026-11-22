@@ -22,7 +22,7 @@ _HASH_SIDE = 16
 # Limiar medido em recortes reais, sobre 256 bits: a MESMA carta deslocada de 1 a
 # 3px (a variação do detector entre frames) fica em 4-36 bits de distância;
 # cartas DIFERENTES ficam em 112-131. 60 é o meio, com folga de ~2x pros dois
-# lados. Ver `_distance` e o teste `test_carta_diferente_do_mesmo_frame_nao_colide`.
+# lados. Ver `hash_distance` e o teste `test_carta_diferente_do_mesmo_frame_nao_colide`.
 _MAX_DISTANCE = 60
 
 
@@ -42,7 +42,8 @@ def perceptual_hash(card_bgr: np.ndarray) -> str:
     return "".join(f"{b:02x}" for b in np.packbits(bits))
 
 
-def _distance(a: str, b: str) -> int:
+def hash_distance(a: str, b: str) -> int:
+    """Bits diferentes entre dois hashes de `perceptual_hash`."""
     if len(a) != len(b):
         return 10**6
     xa = np.frombuffer(bytes.fromhex(a), dtype=np.uint8)
@@ -79,7 +80,7 @@ class CardDB:
             return self._entries[h]
         best, best_d = None, _MAX_DISTANCE + 1
         for known, record in self._entries.items():
-            d = _distance(h, known)
+            d = hash_distance(h, known)
             if d < best_d:
                 best, best_d = record, d
         return best if best_d <= _MAX_DISTANCE else None
