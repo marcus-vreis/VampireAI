@@ -1832,3 +1832,25 @@ como na rota do usuário. **Não exercitado ao vivo**: na run seguinte o usuári
 tinha contornado a cerca manualmente.
 **Efeito colateral aceito:** andar contra um ponto de bônus que não move o
 personagem também vira cerca. O agente não mira bônus, e a cerca vale só no andar.
+
+## ADR-105: Carta de custo ilegível é tentada antes de encerrar o turno (2026-11-22)
+**Data:** 2026-11-22
+**Contexto:** o VLM devolve custo `None` em 17 de 187 leituras (9%, runs de
+2026-11-22). O prompt manda preferir custo conhecido (ADR-051), e o modelo
+encerrava o turno com mana sobrando: "mana insuficiente e cartas com custo
+desconhecido", 2 vezes na run 11. O último recurso da ADR-051 (`fallback_index`)
+só entrava quando o modelo propunha jogada ilegal, nunca quando ele encerrava o
+turno. A "trava do turno" que a ADR-051 temia nunca foi observada; era hipótese.
+**Decisão:** quando o modelo escolhe `finalizar_turno` e há carta de custo
+ilegível na mão, o agente tenta a primeira delas antes de encerrar. A carta
+tentada sai da mão conhecida, então não é tentada de novo no mesmo turno mesmo
+que o jogo recuse; a próxima travessia a traz de volta.
+**Alternativas medidas e descartadas:**
+- Ler o custo do círculo (`read_costs`, já existente): em frames reais, 18 de 26
+  saíram `None` e 7 dos 8 lidos estavam errados (quase sempre "9"). O livro de
+  glifos é compartilhado com o HUD e não conhece o algarismo do círculo.
+- Recuperar o custo pelo nome no `CardDB`: só 4 de 17 sem ambiguidade. O próprio
+  cache tem custos contraditórios para o mesmo nome (Osso 0 e 8, Gatti 1 e 9).
+**Resultado ao vivo (80 passos):** 0 turnos encerrados por custo desconhecido
+(eram 2), 13 cartas jogadas (eram 9). O último recurso disparou 1 vez e o turno
+seguiu normalmente. Não deu para ver se o jogo aceitou essa carta específica.

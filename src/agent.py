@@ -38,7 +38,7 @@ from src.perception import (
     scan_combat_hand,
     seek_card,
 )
-from src.schemas import ChoiceAction, CombatAction
+from src.schemas import CardScanFrame, ChoiceAction, CombatAction
 from src.stall import Nudge, StallDetector
 from src.states import GameNotFocusedError, GameState, NotTheGameError
 from src.vision.minimap import Fence, Minimap, Turn, read_minimap, with_fences
@@ -282,25 +282,44 @@ def handle_combat(memory: Memory | None = None) -> None:
         _end_combat_turn("Sem cartas legíveis na mão — finalizando turno")
         return
 
+    choice = _choose_target(scan, memory)
+    if choice is None:
+        return
+    target, motivo = choice
+    card = scan.cards[target]
+    logger.info("Jogar '{}' idx={}, motivo: {}", card.nome, target, motivo)
+    _play_card(target, scan, memory, motivo)
+
+
+def _choose_target(scan: HandScan, memory: Memory | None) -> tuple[int, str] | None:
+    """Índice e motivo da jogada, ou None depois de encerrar o turno."""
     action = _decide_combat(scan, memory)
     if action is None:
         target = fallback_index(scan.cards, scan.mana)
         if target is None:
             _end_combat_turn(f"Nada jogável com {scan.mana} de mana — finalizando turno")
-            return
+            return None
         logger.info("Modelo não achou jogada legal — regra de custo crescente: idx={}", target)
-        motivo = "regra de reserva: custo crescente"
-    elif action.acao == "finalizar_turno":
+        return target, "regra de reserva: custo crescente"
+    if action.acao != "finalizar_turno":
+        assert action.indice_alvo is not None
+        return action.indice_alvo, action.motivo
+    target = _unknown_cost_card(scan.cards)
+    if target is None:
         _end_combat_turn(f"Finalizando turno: {action.motivo}", memory)
-        return
-    else:
-        target = action.indice_alvo
-        motivo = action.motivo
+        return None
+    logger.info("Modelo encerraria o turno; antes, tenta a carta de custo ilegível idx={}", target)
+    return target, "último recurso: custo ilegível"
 
-    assert target is not None
-    card = scan.cards[target]
-    logger.info("Jogar '{}' idx={}, motivo: {}", card.nome, target, motivo)
-    _play_card(target, scan, memory, motivo)
+
+def _unknown_cost_card(cards: list[CardScanFrame]) -> int | None:
+    """Primeira carta de custo ilegível: o último recurso da ADR-051, antes de encerrar.
+
+    O modelo encerrava o turno com 4 de mana sobrando por causa delas (run de
+    2026-11-22). Tentar custa um posicionamento; se o jogo recusar, a carta já
+    saiu da mão conhecida e não é tentada de novo neste turno. Ver ADR-105.
+    """
+    return next((i for i, c in enumerate(cards) if c.mana is None), None)
 
 
 def _play_card(target: int, scan: HandScan, memory: Memory | None, motivo: str) -> None:

@@ -335,12 +335,15 @@ esbarra num portão de grade. Mecânica a confirmar.
   sem sair da célula grava uma cerca, e o BFS contorna. Testado com frame real;
   ainda não exercitado ao vivo.
 
-**Melhor run do dia (80 passos):** andar 2 → chefe → andar 3, 9 cartas jogadas,
-5 falhas de posicionamento em 14. Pendências vistas: "custo desconhecido" ainda
-encerra turno (13% das leituras, ver ADR-056), 3 jogadas ilegais, e algumas telas
-classificadas como `shop` no meio do combate (não investigado).
+- **Custo ilegível (`src/agent.py`, ADR-105):** carta de custo ilegível é tentada
+  antes de encerrar o turno. Ao vivo: 0 turnos encerrados por custo
+  desconhecido (eram 2), 13 cartas jogadas em 80 passos (eram 9).
 
-**Testes:** 350 passando.
+**Pendências vistas:** posicionamento falhou em 10 de 23 jogadas na última run
+(43%, era 36%); jogadas ilegais (2-3 por run); algumas telas classificadas como
+`shop` no meio do combate (não investigado).
+
+**Testes:** 353 passando.
 
 
 ## Próximo
