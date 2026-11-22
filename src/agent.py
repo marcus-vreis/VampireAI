@@ -41,7 +41,7 @@ from src.perception import (
 from src.schemas import ChoiceAction, CombatAction
 from src.stall import Nudge, StallDetector
 from src.states import GameNotFocusedError, GameState, NotTheGameError
-from src.vision.minimap import Turn, read_minimap
+from src.vision.minimap import Fence, Minimap, Turn, read_minimap, with_fences
 from src.window import find_game_window
 
 # Mão conhecida, reaproveitada entre jogadas do mesmo turno. Refazer a travessia
@@ -343,6 +343,50 @@ _TURN_ACTION = {
 }
 
 
+# Cercas aprendidas neste andar, e o último "andar pra frente" pra conferir se ele
+# saiu da célula. Ver ADR-104.
+_FENCES: set[Fence] = set()
+_LAST_WALK: Fence | None = None
+# O centro da seta varia 1-2px entre frames; a célula vizinha está a 30px.
+_SAME_CELL_PX = 6
+
+
+def forget_fences() -> None:
+    """Esquece cercas e o último passo. Coordenadas do minimapa valem por andar."""
+    global _LAST_WALK
+    _FENCES.clear()
+    _LAST_WALK = None
+
+
+def _learn_fence(minimap: Minimap) -> None:
+    """Andou pra frente e continua na mesma célula olhando pro mesmo lado: cerca."""
+    global _LAST_WALK
+    if _LAST_WALK is None:
+        return
+    (x, y), facing = _LAST_WALK
+    _LAST_WALK = None
+    px, py = minimap.player
+    same_cell = abs(x - px) <= _SAME_CELL_PX and abs(y - py) <= _SAME_CELL_PX
+    if same_cell and facing is minimap.facing:
+        logger.info("Cerca em {} olhando {} — o minimapa não a desenha", (x, y), facing.value)
+        _FENCES.add(((x, y), facing))
+
+
+def _remember_walk(minimap: Minimap) -> None:
+    global _LAST_WALK
+    _LAST_WALK = (minimap.player, minimap.facing)
+
+
+def _forget_last_walk() -> None:
+    global _LAST_WALK
+    _LAST_WALK = None
+
+
+def _forget_fences_if_leaving(minimap: Minimap, turn: Turn) -> None:
+    if minimap.on_exit and turn is Turn.FORWARD:
+        forget_fences()
+
+
 def handle_map(memory: Memory | None = None) -> None:
     """Lê o minimapa e dá UM passo rumo ao alvo.
 
@@ -356,6 +400,8 @@ def handle_map(memory: Memory | None = None) -> None:
         input_exec.walk_forward()
         return
 
+    _learn_fence(minimap)
+    minimap = with_fences(minimap, _FENCES)
     step = plan(minimap)
     if step is None:
         logger.info("Nada alcançável no mapa — andando pra frente")
@@ -374,6 +420,9 @@ def handle_map(memory: Memory | None = None) -> None:
         time.sleep(_BETWEEN_TURNS_S)
         input_exec.turn_right()
         return
+    _forget_fences_if_leaving(minimap, step.turn)
+    if step.turn is Turn.FORWARD:
+        _remember_walk(minimap)
     _TURN_ACTION[step.turn]()
 
 
@@ -597,6 +646,7 @@ def _step(
     if perceived.state is not last_state:
         memory.append(f"transição -> {perceived.state.value}", state=perceived.state.value)
         forget_hand()  # a mão só vale dentro do mesmo combate
+        _forget_last_walk()  # o passo levou a outra tela: não bateu em cerca
     _RUN.passos += 1
     _RUN.estados[perceived.state.value] += 1
     handler = _HANDLERS.get(perceived.state)

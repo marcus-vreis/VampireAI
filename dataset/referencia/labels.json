@@ -25,7 +25,11 @@
     "20260802T154129487_level_up.png": "level_up",
     "deck_baralho_referencia.png": "deck",
     "20260802T153731541_combat_initial.png": "not_game",
-    "20261122T135921230_joia_uma_carta.png": "chest_card_target"
+    "20261122T083807446_map_seta_sul_saida_andar.png": "map",
+    "20261122T083808959_map_seta_norte_saida_andar.png": "map",
+    "20261122T135921230_joia_uma_carta.png": "chest_card_target",
+    "20261122T140345579_map_andar2_inimigo_a_oeste.png": "map",
+    "20261122T144245137_map_cerca_ao_norte.png": "map"
   },
   "_nomes_enganosos": [
     "Vários nomes de arquivo carregam o estado que o AGENTE ACHOU na época, e",

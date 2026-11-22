@@ -311,18 +311,30 @@ def test_nao_manda_mais_andar_contra_a_parede():
     plano = plan(_mapa(_PAREDE))
     assert plano is not None, "ha caminho: leste e oeste sao piso"
     assert plano.turn is not Turn.FORWARD
-    assert plano.turn is Turn.LEFT, "olhando sul, virar a esquerda aponta pro leste, que e piso"
+    # Era LEFT (leste) ate a ADR-102: o 1o passo de 3px do BFS apontava pro sul,
+    # a sonda reprovava e o plano caia num alvo a leste. O caminho mais curto ate
+    # o inimigo (94,69) sai da celula pelo OESTE, em (105,48). Leste e oeste sao
+    # piso; o que esta regressao guarda e nao andar contra a parede ao sul.
+    assert plano.turn is Turn.RIGHT, "olhando sul, virar a direita aponta pro oeste, que e piso"
+    assert plano.goal == (94, 69)
 
 
 @pytest.mark.parametrize("nome", _MAPAS_FASE1 + (_PAREDE,))
 def test_todo_frente_aponta_pra_piso(nome):
     """A invariante que o conserto instala: se o plano e ANDAR, a celula inteira
-    a frente tem que ser piso. Girar continua livre -- girar nunca bate."""
+    a frente tem que ser piso. Girar continua livre -- girar nunca bate.
+
+    Unica excecao: na saida do andar, andar pra FORA do piso e o objetivo
+    (ADR-100). `193755377` e uma delas: bau dourado a frente, borda sul da sala.
+    """
     from src.vision.minimap import Turn, cell_ahead_walkable
 
     mm = _mapa(nome)
     plano = plan(mm)
     if plano is not None and plano.turn is Turn.FORWARD:
+        if plano.reason == "saída do andar":
+            assert not cell_ahead_walkable(mm, mm.facing), f"{nome}: saida aponta pra piso"
+            return
         assert cell_ahead_walkable(mm, mm.facing), f"{nome} manda andar contra parede"
 
 
@@ -348,3 +360,108 @@ def test_a_sonda_nao_usa_o_passo_real_do_jogador():
     finally:
         mmod._PROBE_PX = original
     assert plan(mm) is not None, "a 19px ha caminho"
+
+
+_DOCS = _RAIZ / "docs" / "images"
+
+
+def _load_any(name: str):
+    path = FRAMES / name if (FRAMES / name).is_file() else _DOCS / name
+    if not path.is_file():
+        pytest.skip(f"frame ausente: {name}")
+    return cv2.imread(str(path))
+
+
+@pytest.mark.parametrize(
+    ("frame", "facing", "turn"),
+    [
+        # Saída a leste, confirmada no jogo. Run de 2026-11-22: preso 99 passos
+        # girando nela, e andar pra norte ou sul não sai do lugar.
+        ("20261122T083807446_map_seta_sul_saida_andar.png", Facing.SOUTH, Turn.LEFT),
+        ("20261122T083808959_map_seta_norte_saida_andar.png", Facing.NORTH, Turn.RIGHT),
+        # Saída a oeste: a imagem do `jogo.md` ("basta ir para frente").
+        ("image-17.png", Facing.WEST, Turn.FORWARD),
+    ],
+)
+def test_na_saida_do_andar_vira_pro_lado_sem_piso_e_anda(frame, facing, turn):
+    """A célula de saída tem piso vizinho em três lados; a saída é o quarto.
+
+    Ter caveira viva ao lado não importa: da saída só se anda pra fora.
+    """
+    minimap = read_minimap(_load_any(frame))
+    assert minimap.facing is facing
+    assert minimap.on_exit
+    step = plan(minimap)
+    assert step is not None
+    assert step.reason == "saída do andar"
+    assert step.turn is turn
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "20260802T153406187_loop.png",
+        "20260802T153746341_loop.png",
+        "20260802T153756843_loop.png",
+        "20260802T154240385_combat_initial.png",
+    ],
+)
+def test_celula_comum_nao_e_saida(frame):
+    assert not read_minimap(load(frame)).on_exit
+
+
+def test_direcao_vem_de_onde_o_caminho_sai_da_celula():
+    """Run de 2026-11-22, andar 2/4: 70 passos indo e voltando entre duas células.
+
+    A direção saía do 1º passo do BFS, que tem 3px (o stride do grid) e cai
+    dentro da célula do jogador. Daqui o caminho até a caveira vizinha começa
+    3px ao norte: virava "norte", a sonda reprovava e o alvo era descartado. A
+    caveira está a oeste, a 11 passos de grid: virar à direita (olhando sul).
+    """
+    minimap = read_minimap(load("20261122T140345579_map_andar2_inimigo_a_oeste.png"))
+    assert minimap.player == (216, 24) and minimap.facing is Facing.SOUTH
+    step = plan(minimap)
+    assert step is not None
+    assert step.reason == "inimigo mais próximo"
+    assert step.goal == (186, 23)
+    assert step.turn is Turn.RIGHT
+
+
+def test_saida_sem_lado_unico_segue_em_frente():
+    """A célula do chefe vira saída quando ele morre, e pode ficar no meio da
+    sala, com piso em mais de um lado. Regra do jogo, confirmada pelo usuário:
+    depois do chefe é só ir pra frente. Simulado pondo piso a leste na saída real.
+    """
+    import dataclasses
+
+    from src.vision.minimap import exit_direction
+
+    real = read_minimap(load("20261122T083808959_map_seta_norte_saida_andar.png"))
+    walkable = real.walkable.copy()
+    px, py = real.player
+    walkable[py - 9 : py + 10, px : px + 40] = True
+    meio_da_sala = dataclasses.replace(real, walkable=walkable)
+    assert meio_da_sala.on_exit and exit_direction(meio_da_sala) is None
+    step = plan(meio_da_sala)
+    assert step is not None
+    assert step.reason == "saída do andar"
+    assert step.turn is Turn.FORWARD
+
+
+def test_cerca_conhecida_faz_o_caminho_contornar():
+    """Andar 2/4, 2026-11-22: cerca ao norte que o minimapa não desenha.
+
+    O usuário demonstrou a rota: virar à direita (leste), andar, virar à
+    esquerda (norte), andar, virar à esquerda (oeste), e o chefe está à frente.
+    Sem a cerca o plano mandava andar pro norte e batia nela pra sempre.
+    """
+    from src.vision.minimap import with_fences
+
+    mm = read_minimap(load("20261122T144245137_map_cerca_ao_norte.png"))
+    assert mm.player == (63, 146) and mm.facing is Facing.NORTH
+    assert plan(mm).turn is Turn.FORWARD, "sem a cerca, bate nela"
+    cercado = with_fences(mm, {(mm.player, Facing.NORTH)})
+    assert cercado.facing is Facing.NORTH and cercado.player == mm.player
+    step = plan(cercado)
+    assert step is not None
+    assert step.turn is Turn.RIGHT

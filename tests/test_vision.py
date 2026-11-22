@@ -81,6 +81,26 @@ def test_minimapa_da_posicao_e_direcao():
     assert minimap.walkable.any()
 
 
+@pytest.mark.parametrize(
+    ("frame", "facing"),
+    [
+        ("20261122T083807446_map_seta_sul_saida_andar.png", Facing.SOUTH),
+        ("20261122T083808959_map_seta_norte_saida_andar.png", Facing.NORTH),
+    ],
+)
+def test_direcao_da_seta_com_entalhe(frame, facing):
+    """Run de 2026-11-22: a seta pra cima saía como LESTE em 52 de 133 frames.
+
+    A seta tem um entalhe na base, então o centroide quase coincide com o
+    centro do bbox (|dy| ~0.7px), e o bbox de 15px pra uma seta de 14 somava
+    um viés fixo de dx ~0.73. O agente ficou 40 passos dando meia-volta na
+    mesma célula. Conferido olhando os dois frames: mesma célula, setas opostas.
+    """
+    minimap = read_minimap(load(frame))
+    assert minimap is not None
+    assert minimap.facing is facing
+
+
 def test_minimapa_ausente_em_combate():
     assert read_minimap(load("20260802T154006402_map.png")) is None
 

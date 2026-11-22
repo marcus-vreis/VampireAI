@@ -19,7 +19,9 @@ from src.vision.minimap import (
     Turn,
     direction_to,
     distant_floor,
+    exit_direction,
     frontier_targets,
+    relative_turn,
 )
 
 
@@ -48,6 +50,25 @@ def _first_reachable(minimap: Minimap, goals: list[tuple[int, int]], reason: str
     return None
 
 
+def _leave_floor(minimap: Minimap) -> Plan | None:
+    """Sobre a saída do andar, só se anda pra fora: virar pro lado dela e seguir.
+
+    Da célula de saída o jogo não deixa andar pros vizinhos (medido: norte e sul
+    não saem do lugar, mesmo com caveira viva ao lado). Ver ADR-100.
+
+    Sem um lado único sem piso (a célula do chefe vira saída no meio da sala),
+    segue em frente: é a regra do jogo depois do chefe (ADR-103).
+    """
+    if not minimap.on_exit:
+        return None
+    side = exit_direction(minimap)
+    if side is None:
+        side = minimap.facing
+    return Plan(
+        turn=relative_turn(minimap.facing, side), goal=minimap.player, reason="saída do andar"
+    )
+
+
 def plan(minimap: Minimap) -> Plan | None:
     """Próxima micro-ação no mapa, ou None se nada é alcançável.
 
@@ -58,6 +79,9 @@ def plan(minimap: Minimap) -> Plan | None:
     `plan` devolvia None e o handler andava pra frente às cegas até o
     antitravamento abortar — justamente quando havia uma fase pra avançar.
     """
+    exit_plan = _leave_floor(minimap)
+    if exit_plan is not None:
+        return exit_plan
     icons = find_icons(minimap.gray, minimap.arrow_side)
     candidates = [
         (_nearest_first(minimap, icons, IconKind.ENEMY), "inimigo mais próximo"),
