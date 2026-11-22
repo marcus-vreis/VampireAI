@@ -180,8 +180,13 @@ def _verdict(
         return Verdict.DECK
     if parchment >= _PARCHMENT_MAP:
         return Verdict.MAP
-    if (hud and not game_over_button) or turn_buttons or cards >= 2:
+    if turn_buttons or cards >= 2:
         return Verdict.COMBAT
+    if hud and not game_over_button:
+        # HUD sem placas de turno e sem mão: tela de escolha por cima da run. Era
+        # combate, e "Inserir joia" com UMA carta virava laço de baú (ADR-101).
+        # Placas presentes em 12 de 13 combates rotulados; o 13º já sai como mapa.
+        return Verdict.DIALOG
     if not hud and parchment < 0.1 and slate < 0.1:
         return Verdict.NOT_GAME
     return Verdict.UNKNOWN

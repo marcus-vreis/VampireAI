@@ -167,3 +167,13 @@ def test_telas_com_hud_sem_botoes_de_combate_nao_passam_por_combate(nome: str, e
     if not caminho.is_file():
         pytest.skip(f"frame ausente: {nome}")
     assert signature(cv2.imread(str(caminho))).verdict is esperado
+
+
+def test_alvo_de_joia_com_uma_carta_so_nao_e_combate():
+    """Run de 2026-11-22: "Inserir joia em uma carta" com UMA carta elegível.
+
+    Sem o botão vermelho do baú e sem par de cartas, só o HUD sobrava, e HUD
+    sozinho dava combate. O agente apertava "finalizar turno" em vez de X, a
+    joia não entrava, e o baú voltava: 14 "recompensas" num laço. Ver ADR-101.
+    """
+    assert signature(load("20261122T135921230_joia_uma_carta.png")).verdict is Verdict.DIALOG
