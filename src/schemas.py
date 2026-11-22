@@ -6,45 +6,15 @@ esquerda). Navegação concreta no gamepad é responsabilidade do executor.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------- Percepção: estados estruturados ----------
 
 
-class Card(BaseModel):
-    posicao: int = Field(description="Índice na mão, 0 = mais à esquerda")
-    nome: str
-    mana: int | None = Field(default=None, description="Custo de mana, ? → null")
-    descricao: str | None = None
-    obstruida: bool = False
-    selecionada: bool = Field(
-        default=False,
-        description="True se esta carta está em destaque/maior (cursor sobre ela)",
-    )
-
-
-class Enemy(BaseModel):
-    posicao: int
-    hp: int | None = None
-    nome: str | None = None
-
-
-class CombatState(BaseModel):
-    """Estado mínimo do combate. Detalhes de cartas vêm via card_scan; HP/inimigos
-    são opcionais e ficam pra OCR/visão posterior se necessário."""
-    total_cartas_visiveis: int
-    indice_selecionada: int | None = Field(
-        default=None,
-        description="Índice 0..N-1 da carta atualmente em destaque",
-    )
-    mana: int | None = None
-    cartas: list[Card] = Field(default_factory=list)
-    mana_max: int | None = None
-    hp_player: int | None = None
-    hp_max: int | None = None
-    inimigos: list[Enemy] = Field(default_factory=list)
+_MAX_MANA = 9
 
 
 class CardScanFrame(BaseModel):
@@ -54,6 +24,19 @@ class CardScanFrame(BaseModel):
     descricao: str | None = None
     tipo: Literal["ataque", "tomo", "armadura", "utilitario", "bonus", "?"] = "?"
 
+    @field_validator("mana")
+    @classmethod
+    def _mana_plausivel(cls, value: int | None) -> int | None:
+        """Custo fora de 0..9 vira None em vez de propagar.
+
+        O modelo já devolveu `mana=-1` lendo uma carta de bônus, cujo "-1" é o
+        efeito ("custo reduzido em 1"), não o custo. Deixar passar faria
+        `combat.validate` aprovar como se coubesse em qualquer mana.
+        """
+        if value is None or 0 <= value <= _MAX_MANA:
+            return value
+        return None
+
 
 class StateDetection(BaseModel):
     estado: str
@@ -62,9 +45,26 @@ class StateDetection(BaseModel):
 # ---------- Decisão: ações do agente ----------
 
 
+def _snake(value: str) -> str:
+    """camelCase / espaços / hífens -> snake_case minúsculo."""
+    texto = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value.strip())
+    return re.sub(r"[\s\-]+", "_", texto).lower()
+
+
 class CombatAction(BaseModel):
     """Próxima ação em combate. Modelo decide UMA carta por vez ou encerra turno."""
     acao: Literal["jogar_carta", "finalizar_turno"]
+
+    @field_validator("acao", mode="before")
+    @classmethod
+    def _normaliza_acao(cls, value: object) -> object:
+        """Aceita variação de grafia do modelo.
+
+        Observado no log: ele respondeu `jogarCarta`. A intenção estava certa e só
+        a grafia errada, mas a validação recusava e queimava um ciclo inteiro de
+        repergunta — que custa ~2s e conta como jogada ilegal na métrica.
+        """
+        return _snake(value) if isinstance(value, str) else value
     indice_alvo: int | None = Field(
         default=None,
         description="Índice (0-based) da carta a jogar. Obrigatório se acao=jogar_carta.",
@@ -72,31 +72,10 @@ class CombatAction(BaseModel):
     motivo: str = Field(description="Justificativa curta (combo de mana, custo, etc.)")
 
 
-class MapDirection(BaseModel):
-    """Resposta visual simples sobre o alvo no mapa 3D."""
-    direcao_alvo: Literal["frente", "esquerda", "direita", "atras", "no_alvo"]
-    motivo: str | None = None
-
-
-class MapAction(BaseModel):
-    """Micro-ação derivada da direção. O agente repete até chegar."""
-    acao: Literal["andar_frente", "girar_esquerda", "girar_direita", "no_alvo"]
-
-
 class ChoiceAction(BaseModel):
     """Escolha em level_up / chest / bonus de carta. Navegação por índice."""
     indice_alvo: int = Field(description="Índice 0..N-1 da opção desejada")
     motivo: str
-
-
-class ChestAction(BaseModel):
-    """Ação dentro de baú: escolher carta, sacar dinheiro, etc."""
-    acao: Literal["escolher_carta", "sacar_dinheiro", "evoluir"]
-    indice_alvo: int | None = None
-    motivo: str | None = None
-
-
-# ---------- Estados antigos mantidos por compat (level_up, map, shop, chest) ----------
 
 
 class LevelUpOption(BaseModel):
@@ -113,17 +92,6 @@ class LevelUpOption(BaseModel):
 class LevelUpState(BaseModel):
     opcoes: list[LevelUpOption]
     indice_selecionada: int | None = None
-
-
-class MapNode(BaseModel):
-    id: str
-    tipo: str
-    disponivel: bool
-
-
-class MapState(BaseModel):
-    nos: list[MapNode]
-    no_atual: str | None = None
 
 
 class ShopItem(BaseModel):

@@ -1,10 +1,30 @@
 [project]
 name = "vampire-ai"
 version = "0.1.0"
-description = "AI agent that plays Vampire Crawlers using a local VLM"
+description = "Agente que joga Vampire Crawlers com visão computacional e um modelo local"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+dependencies = [
+    "mss>=9.0",
+    "vgamepad>=0.1.0",       # Windows: exige o driver ViGEm Bus, instalado à parte
+    "openai>=1.50",          # SDK apontando pro Ollama (ADR-002)
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pytesseract>=0.3.13",   # opcional em runtime: acelera o aquecimento dos glifos
+    "pydantic>=2.5",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+# Isto é uma APLICAÇÃO, não uma biblioteca: roda com `python -m src.agent` de
+# dentro da pasta do projeto. Não declaramos `src` como pacote distribuível de
+# propósito — seria um nome péssimo em site-packages, e ninguém importa este
+# código de fora. O install editável serve só pra trazer as dependências.
 
 [tool.ruff]
 line-length = 100

@@ -42,3 +42,7 @@ __pycache__/
 
 # Scratch temporário
 teste.py
+
+# O dataset rotulado é a suíte de regressão — versionado de propósito.
+# `frames/` continua ignorado: é despejo de debug, não conjunto curado.
+!dataset/
