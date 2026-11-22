@@ -30,6 +30,7 @@ from src.memory import Memory, default_memory
 from src.nav import plan
 from src.perception import (
     HandScan,
+    PerceivedFrame,
     default_carddb,
     default_glyphbook,
     perceive,
@@ -555,6 +556,25 @@ def _require_focus() -> None:
         )
 
 
+def _perceive_own_screen(frame_path: str) -> PerceivedFrame | None:
+    """`perceive`, mas uma tela escura com o jogo confirmado na frente vira None.
+
+    `_require_focus` acabou de perguntar ao SISTEMA, e ele disse que a captura é
+    o jogo. Se a CV ainda assim diz `not_game`, é tela escura dele: o alerta de
+    fotossensibilidade do boot (brilho 12.8, medido 2026-11-22) ou carregamento.
+    Abortar ali repetia a armadilha da ADR-084; o antitravamento aperta X (ADR-099).
+    """
+    try:
+        return perceive(frame_path)
+    except GameNotFocusedError:
+        raise
+    except NotTheGameError as e:
+        if gamepad.is_dry_run():
+            raise  # replay: frame de arquivo, sem sistema pra confirmar
+        logger.info("Tela escura do próprio jogo ({}) — aguardando o antitravamento", e)
+        return None
+
+
 def _step(
     memory: Memory, last_state: GameState | None, detector: StallDetector
 ) -> GameState | None:
@@ -566,7 +586,9 @@ def _step(
             raise RuntimeError("tela travada e nenhum botão destravou")
         return last_state
 
-    perceived = perceive(frame_path)
+    perceived = _perceive_own_screen(frame_path)
+    if perceived is None:
+        return last_state
     if perceived.state is not last_state:
         memory.append(f"transição -> {perceived.state.value}", state=perceived.state.value)
         forget_hand()  # a mão só vale dentro do mesmo combate
